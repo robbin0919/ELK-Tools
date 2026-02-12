@@ -6,6 +6,7 @@ $indexName = "your_index"
 $outputFile = "export_data.json"
 $scrollTimeout = "2m"
 $batchSize = 5000
+$queryFile = "query.json"
 
 # 如果有啟用安全性驗證，請取消以下註解並設定帳密
 # $user = "admin"
@@ -14,16 +15,24 @@ $batchSize = 5000
 # $encoded = [System.Convert]::ToBase64String([System.Text.Encoding]::ASCII.GetBytes($pair))
 # $headers = @{ Authorization = "Basic $encoded" }
 
+# 1. 準備查詢條件 (優先讀取檔案，否則預設 match_all)
+if (Test-Path $queryFile) {
+    $query = Get-Content -Raw $queryFile
+    Write-Host "使用來自 $queryFile 的查詢條件。" -ForegroundColor Gray
+} else {
+    $query = @{
+        size = $batchSize
+        query = @{
+            match_all = @{}
+        }
+    } | ConvertTo-Json
+    Write-Host "未發現 $queryFile，將匯出所有資料。" -ForegroundColor Gray
+}
+
 Write-Host "開始從 $indexName 匯出資料至 $outputFile..." -ForegroundColor Cyan
 
-# 1. 初始化 Scroll 查詢
+# 2. 初始化 Scroll 查詢
 $searchUri = "$baseUrl/$indexName/_search?scroll=$scrollTimeout"
-$query = @{
-    size = $batchSize
-    query = @{
-        match_all = @{}
-    }
-} | ConvertTo-Json
 
 # 如果有 $headers 變數，請在 Invoke-RestMethod 加入 -Headers $headers
 $response = Invoke-RestMethod -Uri $searchUri -Method Post -Body $query -ContentType "application/json" # -Headers $headers

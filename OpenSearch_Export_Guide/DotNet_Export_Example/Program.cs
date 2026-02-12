@@ -18,15 +18,26 @@ class Program
         string scrollTimeout = "2m"; // 快照存留時間
         int batchSize = 5000;       // 每批次抓取筆數
         string outputFilePath = "export_data.json";
+        string queryFilePath = "query.json"; // 查詢條件檔案
 
-        Console.WriteLine($"開始匯出資料至 {outputFilePath}...");
+        // 2. 準備查詢條件
+        string queryJson = "{\"match_all\": {}}";
+        if (File.Exists(queryFilePath))
+        {
+            queryJson = File.ReadAllText(queryFilePath);
+            Console.WriteLine($"使用來自 {queryFilePath} 的查詢條件。");
+        }
+        else
+        {
+            Console.WriteLine("未發現 query.json，將匯出所有資料 (match_all)。");
+        }
 
-        // 2. 初始化 Scroll 查詢
+        // 3. 初始化 Scroll 查詢
         var searchResponse = await client.SearchAsync<dynamic>(s => s
-            .From(0)
+            .Index("your_index")
             .Size(batchSize)
-            .Query(q => q.MatchAll())
-            .Scroll(scrollTimeout) // 開啟 Scroll
+            .Scroll(scrollTimeout)
+            .Query(q => q.Raw(queryJson)) // 使用 Raw JSON 讓使用者可控
         );
 
         if (!searchResponse.IsValid)
