@@ -163,6 +163,23 @@ while ($hits.Count -gt 0) {
 
 ---
 
+## 8. 安全性與驗證 (Security & Authentication)
+在正式環境中，OpenSearch 通常會啟用安全性外掛。以下是常見的驗證處理方式：
+
+### Basic Auth 範例
+*   **curl**: 使用 `-u admin:password`。
+*   **Python**: `OpenSearch(hosts=..., http_auth=('admin', 'pass'))`。
+*   **.NET**: `settings.BasicAuthentication("admin", "pass")`。
+*   **PowerShell**: 在 Header 中加入 `Authorization: Basic [Base64]`。
+
+### SSL/TLS 憑證
+如果 OpenSearch 使用 HTTPS 且憑證是自簽的（常見於內部網路），你可能需要忽略 SSL 驗證：
+*   **curl**: 加入 `-k` 或 `--insecure`。
+*   **.NET**: 設定 `ServerCertificateValidationCallback`。
+*   **PowerShell**: 使用 `[System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }`（僅限 Windows PowerShell）或在 PowerShell Core 使用 `-SkipCertificateCheck`。
+
+---
+
 ## 注意事項
 
 ### 1. 突破 `max_result_window` 限制

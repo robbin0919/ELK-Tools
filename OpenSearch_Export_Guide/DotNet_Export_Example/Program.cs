@@ -10,6 +10,8 @@ class Program
         // 1. 設定連線資訊
         var node = new Uri("http://localhost:9200");
         var settings = new ConnectionSettings(node)
+            // .BasicAuthentication("admin", "your_password") // 如果有啟用安全性驗證，請取消此行註解
+            // .ServerCertificateValidationCallback(CertificateHandlers.DangerousAcceptAnyServerCertificate) // 如果使用 HTTPS 且是自簽憑證
             .DefaultIndex("your_index");
         var client = new OpenSearchClient(settings);
 

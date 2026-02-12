@@ -7,6 +7,13 @@ $outputFile = "export_data.json"
 $scrollTimeout = "2m"
 $batchSize = 5000
 
+# 如果有啟用安全性驗證，請取消以下註解並設定帳密
+# $user = "admin"
+# $pass = "your_password"
+# $pair = "$($user):$($pass)"
+# $encoded = [System.Convert]::ToBase64String([System.Text.Encoding]::ASCII.GetBytes($pair))
+# $headers = @{ Authorization = "Basic $encoded" }
+
 Write-Host "開始從 $indexName 匯出資料至 $outputFile..." -ForegroundColor Cyan
 
 # 1. 初始化 Scroll 查詢
@@ -18,7 +25,8 @@ $query = @{
     }
 } | ConvertTo-Json
 
-$response = Invoke-RestMethod -Uri $searchUri -Method Post -Body $query -ContentType "application/json"
+# 如果有 $headers 變數，請在 Invoke-RestMethod 加入 -Headers $headers
+$response = Invoke-RestMethod -Uri $searchUri -Method Post -Body $query -ContentType "application/json" # -Headers $headers
 $scrollId = $response._scroll_id
 $hits = $response.hits.hits
 
