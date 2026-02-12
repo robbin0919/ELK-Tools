@@ -106,6 +106,63 @@ df.to_csv("output.csv", index=False)
 
 ---
 
+## 6. 使用 .NET 8 (C#) 腳本
+適合在企業級環境中使用，利用 `OpenSearch.Client` (NEST 衍生版本) 的 Scroll API 處理巨量資料。
+
+### 核心代碼範例：
+```csharp
+using OpenSearch.Client;
+
+var settings = new ConnectionSettings(new Uri("http://localhost:9200")).DefaultIndex("your_index");
+var client = new OpenSearchClient(settings);
+
+string scrollTimeout = "2m";
+var response = await client.SearchAsync<dynamic>(s => s
+    .Size(5000)
+    .Query(q => q.MatchAll())
+    .Scroll(scrollTimeout)
+);
+
+while (response.Documents.Any())
+{
+    // 處理資料 (例如寫入檔案)
+    // ...
+    
+    // 繼續捲動抓取
+    response = await client.ScrollAsync<dynamic>(scrollTimeout, response.ScrollId);
+}
+```
+*   **優點**：強型別支援、非同步效能優異，適合整合至現有的 .NET 後端系統。
+*   **完整範例**：請參考同目錄下的 `DotNet_Export_Example` 專案。
+
+---
+
+## 7. 使用 PowerShell 腳本
+適合 Windows 或 Linux (安裝有 PowerShell Core) 的自動化排程與維運腳本。
+
+### 核心代碼範例：
+```powershell
+$scrollId = $response._scroll_id
+$hits = $response.hits.hits
+
+while ($hits.Count -gt 0) {
+    # 處理資料
+    foreach ($hit in $hits) { $hit._source | ConvertTo-Json -Compress | Add-Content "data.json" }
+
+    # 繼續捲動
+    $response = Invoke-RestMethod -Uri "$baseUrl/_search/scroll" -Method Post -Body (@{
+        scroll = "2m"
+        scroll_id = $scrollId
+    } | ConvertTo-Json) -ContentType "application/json"
+    $scrollId = $response._scroll_id
+    $hits = $response.hits.hits
+}
+```
+*   **優點**：無需額外 SDK (內建 `Invoke-RestMethod`)，適合快速腳本開發。
+*   **完整範例**：請參考同目錄下的 `PowerShell_Export_Example` 專案。
+
+---
+
 ## 注意事項
 
 ### 1. 突破 `max_result_window` 限制
