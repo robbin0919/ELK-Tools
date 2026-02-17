@@ -35,7 +35,7 @@
 ## 5. 詳細設計
 
 ### 5.1 設定檔設計 (`config.json`)
-為了支援多組設定，設定檔將改為「Profiles」結構：
+為了支援多組設定，設定檔將改為「Profiles」結構，且每個 Profile 可包含多個具名查詢語句：
 ```json
 {
   "Profiles": {
@@ -52,15 +52,10 @@
         "BatchSize": 5000,
         "OutputPath": "./exports/prod/"
       },
-      "Query": { "match_all": {} }
-    },
-    "Debug-Errors": {
-      "Connection": {
-        "Endpoint": "https://dev-os:9200",
-        "Index": "app-errors",
-        "Username": "dev-user"
-      },
-      "Query": { "term": { "level": "error" } }
+      "Queries": {
+        "All-Data": { "match_all": {} },
+        "Error-Only": { "term": { "status": 500 } }
+      }
     }
   },
   "DefaultProfile": "Prod-Web-Logs"
@@ -69,8 +64,10 @@
 
 ### 5.2 核心工作流程
 1.  **模式與 Profile 判定**：
-    *   **指定 Profile (CLI)**：若啟動時帶有 `--profile [Name]`，程式將直接載入該 Profile 的設定。若該 Profile 不存在則報錯。
-    *   **引導模式 (TUI)**：若無參數啟動，首先顯示**已儲存設定檔選單**供使用者挑選，或選擇「建立新設定」。
+    *   **指定 Profile (CLI)**：若啟動時帶有 `--profile [Name]`，程式將直接載入該 Profile 的設定。若該 Profile 帶有多個 Query，且未指定 `--query-name`，則預設使用第一個或名為 `Default` 的查詢。
+    *   **引導模式 (TUI)**：
+        1. 首先顯示**已儲存設定檔選單**供使用者挑選連線目標。
+        2. 選定後，若該 Profile 有多個 Query，系統將引導使用者挑選要使用的查詢語句。
 2.  **執行匯出 (核心邏輯)**：
     *   **建立快照 (Initial Search)**：發送帶有 `scroll=[逾時時間]` 參數的 Search 請求，這會在伺服器端建立一個資料快照，並回傳第一個 `scroll_id`。
     *   **分批迴圈 (Scroll Loop)**：
@@ -100,6 +97,17 @@
     *   **確認執行**：顯示設定摘要，詢問「是否開始導出？[Y/n]」。
     *   **視覺化進度**：執行期間顯示彩色進度條，實時顯示「已匯出筆數」與「預估剩餘時間」。
     *   **完成提示**：匯出成功後，顯示檔案路徑並提供「開啟資料夾」或「結束程式」的選項。
+
+### 5.5 查詢語句維護 (Query Maintenance)
+為了彈性過濾匯出資料，系統於「管理設定檔」中提供 Query 編輯功能：
+1.  **維護方式**：
+    *   **多 Query 管理**：支援在 Profile 下新增、重新命名、刪除多組具名 Query。
+    *   **快速模板**：提供 `match_all`、`range` (時間區間) 等常用 JSON 範本供快速套用。
+    *   **文字編輯**：支援在終端機直接輸入 JSON 字串。
+    *   **外部編輯器 (進階)**：提供「使用預設編輯器編輯」選項，將 Query 寫入暫存檔並調用系統 `notepad` 或 `vim` 進行編輯，存檔後自動回填。
+2.  **校驗邏輯**：
+    *   **格式檢查**：儲存前必須通過本地端 `System.Text.Json` 的解析測試。
+    *   **語法測試 (選用)**：提供「測試查詢」功能，發送小型 Search 請求 (size=0) 至 OpenSearch 以確認語法是否被伺服器接受。
 
 ## 6. 部署與排程設計
 

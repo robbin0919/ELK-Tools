@@ -10,7 +10,7 @@ public class ProfileConfig
 {
     public ConnectionConfig Connection { get; set; } = new();
     public ExportConfig Export { get; set; } = new();
-    public object Query { get; set; } = new { match_all = new { } };
+    public Dictionary<string, object> Queries { get; set; } = new() { { "Default", new { match_all = new { } } } };
 }
 
 public class ConnectionConfig
