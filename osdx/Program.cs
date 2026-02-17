@@ -6,8 +6,11 @@ using osdx.UI;
 
 // 初始化日誌
 Log.Logger = new LoggerConfiguration()
-    .MinimumLevel.Information()
-    .WriteTo.File("logs/osdx-.log", rollingInterval: RollingInterval.Day, outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] {Message:lj}{NewLine}{Exception}")
+    .MinimumLevel.Verbose() 
+    .WriteTo.File("logs/osdx-.log", 
+        rollingInterval: RollingInterval.Day, 
+        outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] {Message:lj}{NewLine}{Exception}",
+        flushToDiskInterval: TimeSpan.FromSeconds(1)) // 每秒強制刷新到磁碟
     .CreateLogger();
 
 try 
