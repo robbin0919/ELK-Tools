@@ -61,7 +61,7 @@ curl -XPOST "https://localhost:9200/test-logs/_doc/1" \
   "user": "alice",
   "action": "login",
   "status": "success"
-}'
+}
 ```
 
 ---
@@ -110,41 +110,14 @@ curl -XPOST "https://localhost:9200/test-logs/_doc/1" \
 
 ## 5. 大數據測試範例 (大量注入)
 
-若要測試 Scroll API 的分批匯出與進度條功能，可使用 PowerShell 注入 3000 筆具備不同業務情境的資料。
+若要測試 Scroll API 的分批匯出與進度條功能，可以使用位於 `Scripts` 目錄下的 PowerShell 腳本。此腳本會注入 3000 筆具備不同業務情境的資料（CICD, IIS, Web App）。
 
-### 資料注入腳本 (`Generate-TestData.ps1`)
-```powershell
-$endpoint = "https://localhost:9200"
-$creds = "admin:OsdxTest2026!"
-$headers = @{ "Content-Type" = "application/json" }
-[System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
-
-function Send-Bulk {
-    param($index, $data)
-    $bulkData = ""
-    foreach ($item in $data) {
-        $bulkData += "{ ""index"": { ""_index"": ""$index"" } }`n"
-        $bulkData += (ConvertTo-Json $item -Compress) + "`n"
-    }
-    $auth = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes($creds))
-    $headers["Authorization"] = "Basic $auth"
-    Invoke-RestMethod -Method Post -Uri "$endpoint/_bulk" -Headers $headers -Body $bulkData
-}
-
-# 1. CICD Logs (1000筆)
-$cicd = 1..1000 | % { @{ "@timestamp"=(Get-Date).AddSeconds(-$_).ToString("yyyy-MM-ddTHH:mm:ssZ"); "project"="OSDX"; "step"="Build"; "status"="success" } }
-Send-Bulk "cicd-logs" $cicd
-
-# 2. IIS Logs (1000筆)
-$iis = 1..1000 | % { @{ "@timestamp"=(Get-Date).AddSeconds(-$_).ToString("yyyy-MM-ddTHH:mm:ssZ"); "method"="GET"; "uri"="/api/v1"; "status"=200 } }
-Send-Bulk "iis-logs" $iis
-
-# 3. Web App Logs (1000筆)
-$app = 1..1000 | % { @{ "@timestamp"=(Get-Date).AddSeconds(-$_).ToString("yyyy-MM-ddTHH:mm:ssZ"); "level"="INFO"; "msg"="Processing..." } }
-Send-Bulk "webapp-logs" $app
+### 執行方式 (Windows CMD)
+```cmd
+powershell -ExecutionPolicy Bypass -File ELK-tools/osdx/Scripts/Generate-TestData.ps1
 ```
 
-執行後即可在 OSDX 中指定 `cicd-logs`, `iis-logs` 或 `webapp-logs` 作為目標 Index 進行匯出測試。
+執行後即可在 OSDX 中指定 `test-logs` 作為目標 Index 進行匯出測試。
 
 ---
 
@@ -152,58 +125,22 @@ Send-Bulk "webapp-logs" $app
 
 此範例模擬 OpenSearch 官方最著名的「Sample Web Logs」格式，包含 `clientip`, `request`, `geo` 等複雜欄位與巢狀結構，適合測試欄位篩選功能。
 
-### 官方格式注入腳本 (`Generate-OfficialSample.ps1`)
-```powershell
-$endpoint = "https://localhost:9200"
-$creds = "admin:OsdxTest2026!"
-$headers = @{ "Content-Type" = "application/json" }
-[System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
-
-function Send-Bulk {
-    param($index, $data)
-    $bulkData = ""
-    foreach ($item in $data) {
-        $bulkData += "{ ""index"": { ""_index"": ""$index"" } }`n"
-        $bulkData += (ConvertTo-Json $item -Compress) + "`n"
-    }
-    $auth = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes($creds))
-    $headers["Authorization"] = "Basic $auth"
-    Invoke-RestMethod -Method Post -Uri "$endpoint/_bulk" -Headers $headers -Body $bulkData
-}
-
-Write-Host "正在生成官方格式模擬資料 (Web Logs)..." -ForegroundColor Cyan
-
-$officialLogs = 1..1000 | ForEach-Object {
-    @{
-        "timestamp" = (Get-Date).AddMinutes(-$_).ToString("yyyy-MM-ddTHH:mm:ssZ")
-        "clientip"  = "192.168.1.$((Get-Random -Minimum 1 -Maximum 254))"
-        "request"   = ("GET /index.html", "POST /api/v1/data", "GET /login")[(Get-Random % 3)]
-        "response"  = (200, 404, 500)[(Get-Random % 3)]
-        "agent"     = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-        "geo"       = @{ "src" = "TW"; "dest" = "US" }
-    }
-}
-
-Send-Bulk "opensearch_dashboards_sample_data_logs" $officialLogs
-Write-Host "成功！已建立官方格式索引: opensearch_dashboards_sample_data_logs" -ForegroundColor Green
+### 執行方式 (Windows CMD)
+```cmd
+powershell -ExecutionPolicy Bypass -File ELK-tools/osdx/Scripts/Generate-OfficialSample.ps1
 ```
+
+成功後會建立索引: `test-logs`。
 
 ---
 
 ## 7. 官方真實資料匯入 (Bank Accounts)
 
-若您需要 100% 官方標準的測試資料（常用於官方 Getting Started 教學），可以使用此腳本匯入 1000 筆真實的銀行帳戶資料。
+若您需要 100% 官方標準的測試資料（常用於官方 Getting Started 教學），可以使用此腳本從 GitHub 下載並匯入 1000 筆真實的銀行帳戶資料。
 
-### 官方銀行資料注入腳本 (`Ingest-OfficialBankData.ps1`)
-```powershell
-$endpoint = "https://localhost:9200"
-$creds = "admin:OsdxTest2026!"
-$sourceUrl = "https://raw.githubusercontent.com/elastic/elasticsearch/master/docs/src/test/resources/accounts.json"
-[System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
-
-Write-Host "下載官方資料中..."
-$rawData = Invoke-WebRequest -Uri $sourceUrl -UseBasicParsing
-$auth = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes($creds))
-Invoke-RestMethod -Method Post -Uri "$endpoint/bank/_bulk" -Headers @{"Authorization"="Basic $auth"; "Content-Type"="application/x-ndjson"} -Body $rawData.Content
-Write-Host "完成！請在 OSDX 中指定 Index 為 'bank' 進行匯出測試。"
+### 執行方式 (Windows CMD)
+```cmd
+powershell -ExecutionPolicy Bypass -File ELK-tools/osdx/Scripts/Ingest-OfficialBankData.ps1
 ```
+
+完成後請在 OSDX 中指定 Index 為 `bank` 進行匯出測試。

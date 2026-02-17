@@ -49,12 +49,13 @@ public static class DataStreamer
                     using var streamWriter = new StreamWriter(filePath, false, Encoding.UTF8);
 
                     // 1. Initial Search (建立 Scroll 快照)
+                    var queryJson = JsonSerializer.Serialize(query);
                     var searchResponse = await client.SearchAsync<Dictionary<string, object>>(s => s
                         .Index(connection.Index)
                         .From(0)
                         .Size(export.BatchSize)
                         .Scroll(export.ScrollTimeout)
-                        .Query(q => q.Raw(JsonSerializer.Serialize(query)))
+                        .Query(q => q.Raw(queryJson))
                         .Source(src => export.Fields.Length > 0 ? src.Includes(f => f.Fields(export.Fields)) : src.IncludeAll())
                     );
 

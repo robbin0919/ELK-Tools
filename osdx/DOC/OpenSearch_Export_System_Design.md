@@ -109,6 +109,12 @@
     *   **格式檢查**：儲存前必須通過本地端 `System.Text.Json` 的解析測試。
     *   **語法測試 (選用)**：提供「測試查詢」功能，發送小型 Search 請求 (size=0) 至 OpenSearch 以確認語法是否被伺服器接受。
 
+> [!IMPORTANT]
+> **Query 輸入格式說明**：
+> 在編輯 Query 時，請僅輸入 `query` 欄位內部的內容。
+> *   正確範例：`{ "match_all": {} }` 或 `{ "term": { "status": 200 } }`
+> *   錯誤範例：`{ "query": { "match_all": {} } }` (請勿包含外層 query 鍵)
+
 ## 6. 部署與排程設計
 
 ### 6.1 Docker 部署

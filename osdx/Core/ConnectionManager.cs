@@ -3,6 +3,7 @@ using OpenSearch.Net;
 using osdx.Models;
 using System.Net;
 using Serilog;
+using System.Text.Json;
 
 namespace osdx.Core;
 
@@ -68,11 +69,13 @@ public static class ConnectionManager
         {
             var client = GetClient(config, password);
             
-            // 使用 low-level 或 high-level search 測試語法
-            // 這裡簡單使用 search 請求，並設定 size=0 僅測試語法
+            // 確保 query 是正確的 JSON 字串，避免 JsonElement 的 ValueKind 問題
+            var queryJson = JsonSerializer.Serialize(query);
+            var requestBody = $"{{\"query\": {queryJson}, \"size\": 0}}";
+
             var response = client.LowLevel.Search<SearchResponse<object>>(
                 config.Index, 
-                PostData.Serializable(new { query = query, size = 0 })
+                PostData.String(requestBody)
             );
 
             if (response.ApiCall.Success)
