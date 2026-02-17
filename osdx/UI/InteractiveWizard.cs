@@ -68,7 +68,7 @@ public static class InteractiveWizard
         switch (choice)
         {
             case "1. 連線資訊選擇 (切換目標)":
-                skipWait = HandleConnectionFlow();
+                skipWait = await HandleConnectionFlowAsync();
                 break;
             case "2. 開始執行資料導出":
                 skipWait = await HandleExportFlowAsync();
@@ -590,7 +590,7 @@ public static class InteractiveWizard
         return true; 
     }
 
-    private static bool HandleConnectionFlow()
+    private static async Task<bool> HandleConnectionFlowAsync()
     {
         while (true)
         {
@@ -627,22 +627,54 @@ public static class InteractiveWizard
             var index = p.Connection.Index;
             AnsiConsole.MarkupLine($"已載入設定檔: [cyan]{Markup.Escape(selectedProfile ?? "")}[/] ({Markup.Escape(endpoint ?? "")})");
 
-            // 帳密輸入
-            var userPrompt = $"請輸入帳號 (Username) [[預設: {Markup.Escape(p.Connection.Username ?? "")}]]:";
-            var username = TryAsk(userPrompt);
+            // 帳密輸入 (必填校驗)
+            string? username = null;
+            while (true)
+            {
+                var userPrompt = $"請輸入帳號 (Username) [[預設: {Markup.Escape(p.Connection.Username ?? "")}]]:";
+                username = TryAsk(userPrompt);
+                if (username == null) break; // Esc pressed
+                if (string.IsNullOrEmpty(username)) username = p.Connection.Username;
+                
+                if (!string.IsNullOrEmpty(username)) break;
+                AnsiConsole.MarkupLine("[red]❌ 錯誤：帳號不可為空值，請重新輸入。[/]");
+            }
             if (username == null) continue;
-            if (string.IsNullOrEmpty(username)) username = p.Connection.Username;
 
-            var password = TryAsk("請輸入 [yellow]密碼 (Password)[/]:", isSecret: true);
+            string? password = null;
+            while (true)
+            {
+                password = TryAsk("請輸入 [yellow]密碼 (Password)[/]:", isSecret: true);
+                if (password == null) break; // Esc pressed
+                if (!string.IsNullOrEmpty(password)) break;
+                AnsiConsole.MarkupLine("[red]❌ 錯誤：密碼不可為空值，請重新輸入。[/]");
+            }
             if (password == null) continue;
 
-            AnsiConsole.Status()
-                .Start("正在驗證連線資訊...", ctx => {
-                    // TODO: 實際呼叫 OpenSearch 驗證
-                    Thread.Sleep(1000); 
-                    Log.Information("連線驗證成功: Endpoint={Endpoint}, Index={Index}, User={User}", endpoint, index, username);
-                    AnsiConsole.MarkupLine($"[green]成功連線至:[/] {Markup.Escape(endpoint ?? "")}");
+            bool isValidated = false;
+            await AnsiConsole.Status()
+                .StartAsync("正在驗證連線資訊...", async ctx => {
+                    var result = await Core.ConnectionManager.ValidateConnectionAsync(p.Connection, password);
+                    if (result.Success)
+                    {
+                        Log.Information("連線驗證成功: Endpoint={Endpoint}, Index={Index}, User={User}", endpoint, index, username);
+                        AnsiConsole.MarkupLine($"[green]成功連線至:[/] {Markup.Escape(endpoint ?? "")}");
+                        isValidated = true;
+                    }
+                    else
+                    {
+                        AnsiConsole.MarkupLine($"[red]❌ 連線失敗：{Markup.Escape(result.Message)}[/]");
+                    }
                 });
+
+            if (!isValidated)
+            {
+                AnsiConsole.MarkupLine("[yellow]驗證未通過，請檢查帳號密碼或伺服器網址後重試。[/]");
+                AnsiConsole.MarkupLine("[grey]按任意鍵重新選擇連線目標或按 Esc 返回主選單...[/]");
+                var key = Console.ReadKey(true);
+                if (key.Key == ConsoleKey.Escape) return true;
+                continue;
+            }
 
             _currentEndpoint = endpoint;
             _currentIndex = index;

@@ -31,6 +31,34 @@ public static class ConnectionManager
         return new OpenSearchClient(settings);
     }
 
+    public static async Task<(bool Success, string Message)> ValidateConnectionAsync(ConnectionConfig config, string? password)
+    {
+        Log.Information("開始連線驗證: Endpoint={Endpoint}, User={User}", config.Endpoint, config.Username);
+        try
+        {
+            var client = GetClient(config, password);
+            var response = await client.PingAsync();
+
+            if (response.IsValid)
+            {
+                return (true, "連線驗證成功。");
+            }
+            else
+            {
+                var msg = response.OriginalException?.Message 
+                          ?? response.ServerError?.Error?.Reason 
+                          ?? $"連線失敗 (HTTP {response.ApiCall.HttpStatusCode})";
+                Log.Warning("連線驗證失敗: {Message}", msg);
+                return (false, msg);
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "連線驗證時發生異常");
+            return (false, ex.Message);
+        }
+    }
+
     public static (bool Success, string Message) TestQuery(ConnectionConfig config, string? password, object query)
     {
         Log.Information("開始 OpenSearch 查詢測試: Endpoint={Endpoint}, Index={Index}, User={User}", 

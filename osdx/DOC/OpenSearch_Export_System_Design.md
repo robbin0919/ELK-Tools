@@ -133,3 +133,6 @@
 *   **單元測試**：測試 Config 解析與 Query 建構邏輯。
 *   **整合測試**：針對實體 OpenSearch 節點進行 10 萬、50 萬、100 萬筆資料的匯出壓力測試。
 *   **相容性測試**：分別在 Windows 11 與 Ubuntu 22.04 執行編譯後的執行檔。
+
+## 9. 測試環境建置
+為了方便開發與驗證，請參考 [OpenSearch 測試環境建置指南](./OpenSearch_Test_Environment_Setup.md) 以快速啟動單節點 Docker 容器並注入樣例資料。
