@@ -13,7 +13,7 @@ public static class InteractiveWizard
     private static string? _currentUser;
     private static string? _currentPassword;
 
-    public static void Run()
+    public static async Task RunAsync()
     {
         Log.Information(">>> [TUI] 進入引導模式主迴圈 <<<");
         
@@ -39,7 +39,7 @@ public static class InteractiveWizard
                 break;
             }
 
-            HandleChoice(choice);
+            await HandleChoiceAsync(choice);
         }
     }
 
@@ -62,7 +62,7 @@ public static class InteractiveWizard
         }
     }
 
-    private static void HandleChoice(string choice)
+    private static async Task HandleChoiceAsync(string choice)
     {
         bool skipWait = false;
         switch (choice)
@@ -71,7 +71,7 @@ public static class InteractiveWizard
                 skipWait = HandleConnectionFlow();
                 break;
             case "2. 開始執行資料導出":
-                skipWait = HandleExportFlow();
+                skipWait = await HandleExportFlowAsync();
                 break;
             case "3. 管理設定檔 (編輯/建立/刪除)":
                 skipWait = HandleManagementFlow();
@@ -513,13 +513,13 @@ public static class InteractiveWizard
         }
     }
 
-    private static bool HandleExportFlow()
+    private static async Task<bool> HandleExportFlowAsync()
     {
         RefreshScreen();
         if (string.IsNullOrEmpty(_currentEndpoint))
         {
             Log.Warning("導出失敗: 尚未連線就嘗試執行導出");
-            AnsiConsole.MarkupLine("[red]❌ 錯誤：尚未建立連線。請先執行「連線資訊選擇與建立」。[/]");
+            AnsiConsole.MarkupLine("[red]❌ 錯誤：尚未建立連線。請先執行「連線資訊選擇 (切換目標)」。[/]");
             return false;
         }
 
@@ -541,12 +541,13 @@ public static class InteractiveWizard
         if (selectedQueryName == null) return true; // 按下 Esc
 
         Log.Information("開始執行資料導出作業: Endpoint={Endpoint}, Index={Index}, Query={QueryName}", _currentEndpoint, _currentIndex, selectedQueryName);
-        AnsiConsole.MarkupLine($"[yellow]🚀 準備執行導出作業...[/]");
-        AnsiConsole.MarkupLine($"[grey]目標:[/] {Markup.Escape(_currentEndpoint ?? "")} [grey]索引:[/] {Markup.Escape(_currentIndex ?? "")}");
-        AnsiConsole.MarkupLine($"[grey]查詢:[/] [yellow]{selectedQueryName}[/]");
         
-        // TODO: 這裡將會呼叫 Core/DataStreamer.cs 並傳入 selectedQueryName 與內容
-        return false;
+        // 執行導出
+        await Core.DataStreamer.ExportAsync(currentProfile.Connection, currentProfile.Export, currentProfile.Queries[selectedQueryName], _currentPassword);
+
+        AnsiConsole.MarkupLine("\n[grey]匯出作業結束。按任意鍵回主選單...[/]");
+        Console.ReadKey(true);
+        return true; 
     }
 
     private static bool HandleConnectionFlow()

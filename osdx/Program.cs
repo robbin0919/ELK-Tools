@@ -27,7 +27,7 @@ try
     else
     {
         // 引導模式 (Interactive Mode)
-        InteractiveWizard.Run();
+        await InteractiveWizard.RunAsync();
     }
 }
 catch (Exception ex)
