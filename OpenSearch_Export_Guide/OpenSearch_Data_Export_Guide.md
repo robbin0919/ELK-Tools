@@ -180,6 +180,39 @@ while ($hits.Count -gt 0) {
 
 ---
 
+## 9. 自動化匯出排程的關鍵資訊清單
+當您需要將上述方法開發成一個穩定、可自動運行的匯出排程時，除了基本的驗證資訊和查詢語法外，還需要一個完整的設定清單，以確保腳本的可靠性與可維護性。以下可作為開發前的準備清單：
+
+### 1. 連線資訊 (Connection Details)
+*   **主機位址 (Endpoint URL)**：OpenSearch 服務的完整 URL，例如 `https://opensearch.your-company.com:9200`。
+*   **索引名稱 (Index Name)**：要查詢的目標索引，可使用萬用字元，如 `my-logs-*`。
+*   **SSL/TLS 憑證處理**：若主機使用 `HTTPS` 且為自簽憑證，腳本需設定為「略過憑證驗證」。
+
+### 2. 驗證資訊 (Authentication Details)
+*   **驗證方式**：是使用基本驗證 (帳號密碼)、API Key 還是其他 Token？
+*   **憑證資訊**：根據驗證方式，提供對應的帳密或金鑰字串。
+
+### 3. 查詢與資料範圍 (Query and Data Scope)
+*   **查詢語法 (Query DSL)**：定義要篩選的資料條件。
+*   **要匯出的欄位 (Fields to Export)**：若格式為 `CSV`，需明確指定欄位及順序。
+
+### 4. 輸出設定 (Output Configuration)
+*   **匯出格式 (Output Format)**：`JSON` 或 `CSV`。
+*   **儲存路徑 (File Path)**：匯出檔案的存放目錄。
+*   **檔案命名規則 (File Naming Convention)**：建議包含動態時間戳以避免檔案覆蓋，例如 `daily_report_2026-02-17_0400.csv`。
+
+### 5. 執行與效能參數 (Execution & Performance)
+*   **匯出方式 (Export Method)**：對於大量資料，應使用 **Scroll API** 或 **Search After**。
+*   **批次大小 (Batch Size / Limit)**：每次批次抓取的資料筆數（例如 `5000`），此為關鍵效能參數。
+*   **逾時設定 (Timeout Settings)**：如 Scroll API 的快照存留時間 (`scrollTime`)。
+
+### 6. 排程與監控 (Scheduling & Monitoring)
+*   **執行頻率 (Schedule/Frequency)**：定義於作業系統層級（如 Linux `cron` 或 Windows `工作排程器`），例如「每天凌晨 4 點」。
+*   **日誌記錄 (Logging)**：腳本應記錄詳細執行過程，以便追蹤問題。
+*   **錯誤通知機制 (Error Notification)**：失敗時應主動通知維運人員（如 **Email**、**Slack/Teams**）。
+
+---
+
 ## 注意事項
 
 ### 1. 突破 `max_result_window` 限制
@@ -196,3 +229,14 @@ while ($hits.Count -gt 0) {
 *   **執行環境**：處理 50 萬筆資料時，建議在與 OpenSearch 同網段或本機執行匯出，以減少網路延遲。
 *   **磁碟空間**：50 萬筆資料轉為 JSON 後體積可能相當大，請預先確認目標目錄的磁碟剩餘空間。
 *   **避開尖峰時段**：大量資料匯出會佔用 IO 與 CPU 資源，建議在業務離峰時段進行。
+
+### 3. 關於 `query` 查詢內容
+本文件中的許多範例使用了 `{"query": { "match_all": {} }}`，這是一個表示「匹配所有文件」的基礎查詢。在實際應用中，您需要根據想匯出的特定資料，自行準備或修改這段 `query` 內容。
+
+這意味著您需要熟悉 OpenSearch 的 [查詢語法 (Query DSL)](https://opensearch.org/docs/latest/opensearch/query-dsl/index/)。
+
+簡單來說，您會透過以下幾種方式定義查詢：
+*   **圖形化介面 (GUI)**：在 OpenSearch Dashboards 中，透過設定時間範圍、篩選條件來動態產生查詢。
+*   **命令列/API (CLI/API)**：直接提供符合 Query DSL 語法的 JSON 結構。
+*   **腳本與程式碼 (Scripts/Code)**：利用各語言的客戶端函式庫 (Client Library) 提供的方法來建構查詢物件。
+*   **工具 (Tools)**：像 `elasticdump` 等工具，通常也支援傳入查詢參數來篩選特定資料。
