@@ -24,7 +24,9 @@ $counter = 0
 Get-Content $filePath -ReadCount 1000 | ForEach-Object {
     foreach ($line in $_) {
         if (-not [string]::IsNullOrWhiteSpace($line)) {
-            [void]$currentBatch.AppendLine($line)
+            # 修正 OpenSearch 2.x 不支援 _type 的問題
+            $sanitizedLine = $line -replace ',"_type":"log"','' -replace '"_type":"log",','' -replace '"_type":"log"',''
+            [void]$currentBatch.AppendLine($sanitizedLine)
             $counter++
         }
     }
