@@ -2,6 +2,7 @@ using Spectre.Console;
 using Serilog;
 using osdx.Models;
 using System.Text.Json;
+using Spectre.Console.Rendering;
 
 namespace osdx.UI;
 
@@ -21,9 +22,9 @@ public static class InteractiveWizard
             RefreshScreen();
 
             var choice = TrySelect("[yellow]請選擇要執行的功能：[/]", new List<string> {
-                        "1. 連線資訊選擇與建立 (切換目標)",
+                        "1. 連線資訊選擇 (切換目標)",
                         "2. 開始執行資料導出",
-                        "3. 管理設定檔 (編輯/刪除)",
+                        "3. 管理設定檔 (編輯/建立/刪除)",
                         "4. 系統設定 (SSL 驗證等)",
                         "---",
                         "Exit (結束程式)"
@@ -51,7 +52,7 @@ public static class InteractiveWizard
         // 顯示目前連線狀態 (若有)
         if (!string.IsNullOrEmpty(_currentEndpoint))
         {
-            AnsiConsole.MarkupLine($"[green]●[/] [grey]URL:[/] [cyan]{Markup.Escape(_currentEndpoint)}[/] [grey]|[/] [grey]Index:[/] [cyan]{Markup.Escape(_currentIndex ?? "-")}[/] [grey]|[/] [grey]User:[/] [yellow]{Markup.Escape(_currentUser ?? "Guest")}[/]");
+            AnsiConsole.MarkupLine($"[green]●[/] [grey]URL:[/] [cyan]{Markup.Escape(_currentEndpoint ?? "")}[/] [grey]|[/] [grey]Index:[/] [cyan]{Markup.Escape(_currentIndex ?? "-")}[/] [grey]|[/] [grey]User:[/] [yellow]{Markup.Escape(_currentUser ?? "Guest")}[/]");
             AnsiConsole.Write(new Rule().RuleStyle("grey"));
             AnsiConsole.WriteLine();
         }
@@ -66,13 +67,13 @@ public static class InteractiveWizard
         bool skipWait = false;
         switch (choice)
         {
-            case "1. 連線資訊選擇與建立 (切換目標)":
+            case "1. 連線資訊選擇 (切換目標)":
                 skipWait = HandleConnectionFlow();
                 break;
             case "2. 開始執行資料導出":
                 skipWait = HandleExportFlow();
                 break;
-            case "3. 管理設定檔 (編輯/刪除)":
+            case "3. 管理設定檔 (編輯/建立/刪除)":
                 skipWait = HandleManagementFlow();
                 break;
             case "4. 系統設定 (SSL 驗證等)":
@@ -99,32 +100,63 @@ public static class InteractiveWizard
         {
             RefreshScreen();
             var config = Core.ConfigService.LoadConfig();
-            var profileNames = config.Profiles.Keys.ToList();
-            profileNames.Add("[[返回主選單]]");
+            
+            // 建立顯示名稱與原始 Key 的映射
+            var profileMap = config.Profiles.ToDictionary(
+                p => $"{p.Key} ({p.Value.Connection.Endpoint} | {p.Value.Connection.Index})",
+                p => p.Key
+            );
 
-            var selectedProfile = TrySelect("請選擇要 [blue]管理[/] 的設定檔：", profileNames);
+            var displayChoices = profileMap.Keys.ToList();
+            displayChoices.Add("[[建立新設定檔]]");
+            displayChoices.Add("[[返回主選單]]");
 
-            if (selectedProfile == null || selectedProfile == "[[返回主選單]]") return true;
+            var selectedDisplay = TrySelect("請選擇要 [blue]管理[/] 的設定檔：", displayChoices);
 
+            if (selectedDisplay == null || selectedDisplay == "[[返回主選單]]") return true;
+
+            if (selectedDisplay == "[[建立新設定檔]]")
+            {
+                CreateNewProfile();
+                continue;
+            }
+
+            var selectedProfile = profileMap[selectedDisplay];
             var profile = config.Profiles[selectedProfile];
 
             while (true)
             {
                 RefreshScreen();
+                
+                // 準備底部的目前連線資訊摘要
+                var profileSummary = new Table().Border(TableBorder.Rounded);
+                profileSummary.AddColumn("項目");
+                profileSummary.AddColumn("詳細資訊");
+                profileSummary.AddRow("URL", profile.Connection.Endpoint);
+                profileSummary.AddRow("Index", profile.Connection.Index);
+                profileSummary.AddRow("User", profile.Connection.Username ?? "");
+
                 var action = TrySelect($"設定檔 [cyan]{selectedProfile}[/] 的操作：", new List<string> {
                             "1. 管理查詢語句清單 (Queries)",
                             "2. 修改連線資訊",
                             "3. 修改導出設定",
                             "4. 刪除此設定檔",
                             "返回上層"
-                        });
+                        }, 10, profileSummary);
 
                 if (action == null || action == "返回上層") break;
                 
-                RefreshScreen();
                 if (action == "1. 管理查詢語句清單 (Queries)")
                 {
                     ManageQueries(selectedProfile, profile);
+                }
+                else if (action == "2. 修改連線資訊")
+                {
+                    EditConnection(selectedProfile, profile);
+                }
+                else if (action == "3. 修改導出設定")
+                {
+                    EditExportSettings(selectedProfile, profile);
                 }
                 else if (action == "4. 刪除此設定檔")
                 {
@@ -145,6 +177,116 @@ public static class InteractiveWizard
                     Console.ReadKey(true);
                 }
             }
+        }
+    }
+
+    private static void EditConnection(string profileName, ProfileConfig profile)
+    {
+        while (true)
+        {
+            RefreshScreen();
+            AnsiConsole.Write(new Rule($"修改 [cyan]{profileName}[/] 的連線資訊").LeftJustified());
+            
+            var infoTable = new Table().Border(TableBorder.Rounded);
+            infoTable.AddColumn("項目");
+            infoTable.AddColumn("目前值");
+            infoTable.AddRow("1. OpenSearch URL", $"[cyan]{profile.Connection.Endpoint}[/]");
+            infoTable.AddRow("2. Target Index", $"[cyan]{profile.Connection.Index}[/]");
+            infoTable.AddRow("3. Username", $"[yellow]{(string.IsNullOrEmpty(profile.Connection.Username) ? "(未設定)" : profile.Connection.Username)}[/]");
+            infoTable.AddRow("4. Ignore SSL Errors", profile.Connection.IgnoreSslErrors ? "[green]True[/]" : "[red]False[/]");
+
+            var choice = TrySelect("請選擇要修改的項目：", new List<string> {
+                "1. 修改 OpenSearch URL",
+                "2. 修改 Target Index",
+                "3. 修改 Username",
+                "4. 切換 SSL 忽略狀態",
+                "返回"
+            }, 10, infoTable);
+
+            if (choice == null || choice == "返回") break;
+
+            switch (choice)
+            {
+                case "1. 修改 OpenSearch URL":
+                    var newUrl = TryAsk($"請輸入新 URL (目前: {profile.Connection.Endpoint}):");
+                    if (!string.IsNullOrWhiteSpace(newUrl)) profile.Connection.Endpoint = newUrl;
+                    break;
+                case "2. 修改 Target Index":
+                    var newIndex = TryAsk($"請輸入新 Index (目前: {profile.Connection.Index}):");
+                    if (!string.IsNullOrWhiteSpace(newIndex)) profile.Connection.Index = newIndex;
+                    break;
+                case "3. 修改 Username":
+                    var newUser = TryAsk($"請輸入新帳號 (目前: {profile.Connection.Username}):");
+                    if (newUser != null) profile.Connection.Username = newUser;
+                    break;
+                case "4. 切換 SSL 忽略狀態":
+                    profile.Connection.IgnoreSslErrors = !profile.Connection.IgnoreSslErrors;
+                    break;
+            }
+
+            SaveProfile(profileName, profile);
+            AnsiConsole.MarkupLine("[green]✅ 連線資訊已更新。[/]");
+            Thread.Sleep(500);
+        }
+    }
+
+    private static void EditExportSettings(string profileName, ProfileConfig profile)
+    {
+        while (true)
+        {
+            RefreshScreen();
+            AnsiConsole.Write(new Rule($"修改 [cyan]{profileName}[/] 的導出設定").LeftJustified());
+
+            var infoTable = new Table().Border(TableBorder.Rounded);
+            infoTable.AddColumn("項目");
+            infoTable.AddColumn("目前值");
+            infoTable.AddRow("1. 導出格式 (Format)", $"[yellow]{profile.Export.Format}[/]");
+            infoTable.AddRow("2. 欄位清單 (Fields)", profile.Export.Fields.Length == 0 ? "[grey](全部欄位)[/]" : string.Join(", ", profile.Export.Fields));
+            infoTable.AddRow("3. 批次大小 (BatchSize)", $"[cyan]{profile.Export.BatchSize}[/]");
+            infoTable.AddRow("4. Scroll 逾時 (Timeout)", $"[cyan]{profile.Export.ScrollTimeout}[/]");
+            infoTable.AddRow("5. 輸出路徑 (OutputPath)", $"[cyan]{profile.Export.OutputPath}[/]");
+
+            var choice = TrySelect("請選擇要修改的項目：", new List<string> {
+                "1. 修改 導出格式 (CSV/JSON)",
+                "2. 修改 欄位清單 (Fields)",
+                "3. 修改 批次大小 (BatchSize)",
+                "4. 修改 Scroll 逾時 (Timeout)",
+                "5. 修改 輸出路徑 (OutputPath)",
+                "返回"
+            }, 10, infoTable);
+
+            if (choice == null || choice == "返回") break;
+
+            switch (choice)
+            {
+                case "1. 修改 導出格式 (CSV/JSON)":
+                    var format = TrySelect("請選擇格式：", new List<string> { "csv", "json", "返回" });
+                    if (format != null && format != "返回") profile.Export.Format = format;
+                    break;
+                case "2. 修改 欄位清單 (Fields)":
+                    var fieldsInput = TryAsk($"請輸入欄位名稱，以逗號分隔 (目前: {string.Join(",", profile.Export.Fields)}):");
+                    if (fieldsInput != null)
+                    {
+                        profile.Export.Fields = fieldsInput.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                    }
+                    break;
+                case "3. 修改 批次大小 (BatchSize)":
+                    var sizeStr = TryAsk($"請輸入批次抓取數量 (預設 5000):");
+                    if (int.TryParse(sizeStr, out int size)) profile.Export.BatchSize = size;
+                    break;
+                case "4. 修改 Scroll 逾時 (Timeout)":
+                    var timeout = TryAsk($"請輸入 Scroll 逾時時間 (例如 1m, 5m):");
+                    if (!string.IsNullOrWhiteSpace(timeout)) profile.Export.ScrollTimeout = timeout;
+                    break;
+                case "5. 修改 輸出路徑 (OutputPath)":
+                    var path = TryAsk($"請輸入匯出檔案存放路徑 (目前: {profile.Export.OutputPath}):");
+                    if (!string.IsNullOrWhiteSpace(path)) profile.Export.OutputPath = path;
+                    break;
+            }
+
+            SaveProfile(profileName, profile);
+            AnsiConsole.MarkupLine("[green]✅ 導出設定已更新。[/]");
+            Thread.Sleep(500);
         }
     }
 
@@ -175,12 +317,23 @@ public static class InteractiveWizard
             }
             else
             {
+                RefreshScreen();
+                // 準備該查詢的內容作為底部顯示
+                var queryJson = JsonSerializer.Serialize(profile.Queries[selectedQuery], new JsonSerializerOptions { WriteIndented = true });
+                var bottomJson = new Rows(
+                    new Text(""),
+                    new Markup($"[grey]查詢語句 [yellow]{selectedQuery}[/] 的目前內容：[/]"),
+                    new Text(queryJson)
+                );
+
                 var action = TrySelect($"查詢語句 [yellow]{selectedQuery}[/] 的操作：", new List<string> {
                     "1. 編輯內容 (Edit)",
                     "2. 重新命名 (Rename)",
                     "3. 刪除此查詢 (Delete)",
                     "返回"
-                });
+                }, 10, bottomJson);
+
+                if (action == null || action == "返回") continue;
 
                 if (action == "1. 編輯內容 (Edit)")
                 {
@@ -228,16 +381,20 @@ public static class InteractiveWizard
         
         RefreshScreen();
         AnsiConsole.Write(new Rule($"編輯 [cyan]{profileName}[/] - [yellow]{queryName}[/] 的 Query").LeftJustified());
-        AnsiConsole.MarkupLine("[grey]目前查詢語句：[/]");
-        AnsiConsole.WriteLine(currentQueryJson);
-        AnsiConsole.WriteLine();
+        
+        // 建立底部的 JSON 顯示區塊
+        var bottomContent = new Rows(
+            new Text(""),
+            new Markup("[grey]目前查詢語句：[/]"),
+            new Text(currentQueryJson)
+        );
 
         var choice = TrySelect("請選擇編輯方式：", new List<string> {
                     "使用快速模板 (Match All)",
                     "直接輸入 JSON 字串",
                     "使用外部編輯器 (Vim/Notepad)",
                     "放棄修改"
-                });
+                }, 10, bottomContent);
 
         string? newJson = null;
 
@@ -274,25 +431,40 @@ public static class InteractiveWizard
             var testConfirm = TryConfirm("是否要立即對 OpenSearch 伺服器進行語法測試？");
             if (testConfirm == true)
             {
-                string? pwd = (profile.Connection.Endpoint == _currentEndpoint && profile.Connection.Index == _currentIndex && !string.IsNullOrEmpty(_currentPassword)) 
-                              ? _currentPassword 
-                              : TryAsk("請輸入密碼以進行測試 (留空則不使用):", isSecret: true);
-                
-                if (pwd == null && (profile.Connection.Endpoint != _currentEndpoint)) 
+                string? user = _currentUser;
+                string? pwd = _currentPassword;
+
+                // 若測試目標不同於目前啟動之連線，則詢問驗證資訊
+                if (profile.Connection.Endpoint != _currentEndpoint || profile.Connection.Index != _currentIndex)
                 {
-                    AnsiConsole.MarkupLine("[yellow]已取消測試。[/]");
-                    return;
+                    AnsiConsole.MarkupLine("[yellow]測試目標與目前使用連線不同，請提供驗證資訊：[/]");
+                    var userPrompt = $"請輸入帳號 (Username) [[預設: {Markup.Escape(profile.Connection.Username ?? "")}]]:";
+                    user = TryAsk(userPrompt);
+                    if (string.IsNullOrEmpty(user)) user = profile.Connection.Username;
+                    
+                    pwd = TryAsk("請輸入密碼 (Password):", isSecret: true);
                 }
 
+                Log.Information("使用者啟動語法測試流程，準備驗證目標: {Endpoint}", profile.Connection.Endpoint);
+
                 AnsiConsole.Status().Start("正在測試查詢語法...", ctx => {
-                    var result = Core.ConnectionManager.TestQuery(profile.Connection, pwd, profile.Queries[queryName]);
+                    // 使用臨時 config 進行測試，不影響原始 profile 儲存
+                    var tempConn = new ConnectionConfig {
+                        Endpoint = profile.Connection.Endpoint,
+                        Index = profile.Connection.Index,
+                        Username = user ?? "",
+                        IgnoreSslErrors = profile.Connection.IgnoreSslErrors
+                    };
+                    var result = Core.ConnectionManager.TestQuery(tempConn, pwd, profile.Queries[queryName]);
                     if (result.Success)
                     {
+                        Log.Information("語法測試成功");
                         AnsiConsole.MarkupLine($"[green]✔ {result.Message}[/]");
                     }
                     else
                     {
-                        AnsiConsole.MarkupLine($"[red]✘ 測試失敗：{Markup.Escape(result.Message)}[/]");
+                        Log.Warning("語法測試失敗: {Message}", result.Message);
+                        AnsiConsole.MarkupLine($"[red]✘ 測試失敗：{Markup.Escape(result.Message ?? "")}[/]");
                     }
                 });
                 AnsiConsole.WriteLine("按任意鍵繼續...");
@@ -301,6 +473,7 @@ public static class InteractiveWizard
         }
         catch (JsonException ex)
         {
+            Log.Error(ex, "JSON 格式錯誤：{ProfileName} - {QueryName}", profileName, queryName);
             AnsiConsole.MarkupLine($"[red]❌ JSON 格式錯誤：{Markup.Escape(ex.Message)}[/]");
             AnsiConsole.WriteLine("按任意鍵繼續...");
             Console.ReadKey(true);
@@ -369,7 +542,7 @@ public static class InteractiveWizard
 
         Log.Information("開始執行資料導出作業: Endpoint={Endpoint}, Index={Index}, Query={QueryName}", _currentEndpoint, _currentIndex, selectedQueryName);
         AnsiConsole.MarkupLine($"[yellow]🚀 準備執行導出作業...[/]");
-        AnsiConsole.MarkupLine($"[grey]目標:[/] {Markup.Escape(_currentEndpoint)} [grey]索引:[/] {Markup.Escape(_currentIndex ?? "")}");
+        AnsiConsole.MarkupLine($"[grey]目標:[/] {Markup.Escape(_currentEndpoint ?? "")} [grey]索引:[/] {Markup.Escape(_currentIndex ?? "")}");
         AnsiConsole.MarkupLine($"[grey]查詢:[/] [yellow]{selectedQueryName}[/]");
         
         // TODO: 這裡將會呼叫 Core/DataStreamer.cs 並傳入 selectedQueryName 與內容
@@ -383,46 +556,41 @@ public static class InteractiveWizard
             RefreshScreen();
             Log.Information("進入連線流程");
             var config = Core.ConfigService.LoadConfig();
-            var profileNames = config.Profiles.Keys.ToList();
-            profileNames.Add("[[建立新連線]]");
-            profileNames.Add("[[返回主選單]]");
+            
+            if (config.Profiles.Count == 0)
+            {
+                AnsiConsole.MarkupLine("[red]⚠ 目前沒有任何設定檔。請先前往「管理設定檔」建立。[/]");
+                return false;
+            }
 
-            var selectedProfile = TrySelect("請選擇 [green]連線目標[/]：", profileNames);
+            var profileMap = config.Profiles.ToDictionary(
+                p => $"{p.Key} ({p.Value.Connection.Endpoint} | {p.Value.Connection.Index})",
+                p => p.Key
+            );
 
-            Log.Information("使用者選擇連線目標: {Target}", selectedProfile);
+            var displayChoices = profileMap.Keys.ToList();
+            displayChoices.Add("[[返回主選單]]");
 
-            if (selectedProfile == null || selectedProfile == "[[返回主選單]]")
+            var selectedDisplay = TrySelect("請選擇 [green]連線目標[/]：", displayChoices);
+
+            Log.Information("使用者選擇連線目標: {Target}", selectedDisplay);
+
+            if (selectedDisplay == null || selectedDisplay == "[[返回主選單]]")
             {
                 return true; 
             }
 
-            string endpoint = "";
-            string index = "";
-            bool isNew = false;
-
-            if (selectedProfile == "[[建立新連線]]")
-            {
-                isNew = true;
-                AnsiConsole.MarkupLine("[grey](提示: 隨時按 Esc 可取消並返回主選單)[/]");
-                var inputUrl = TryAsk("請輸入 OpenSearch [bold]URL[/] (例如 http://localhost:9200):");
-                if (inputUrl == null) continue;
-                endpoint = inputUrl;
-
-                var inputIndex = TryAsk("請輸入 [bold]Index[/] 名稱 (例如 logs-*):");
-                if (inputIndex == null) continue;
-                index = inputIndex;
-            }
-            else
-            {
-                var p = config.Profiles[selectedProfile];
-                endpoint = p.Connection.Endpoint;
-                index = p.Connection.Index;
-                AnsiConsole.MarkupLine($"已載入設定檔: [cyan]{Markup.Escape(selectedProfile)}[/] ({Markup.Escape(endpoint)})");
-            }
+            var selectedProfile = profileMap[selectedDisplay];
+            var p = config.Profiles[selectedProfile];
+            var endpoint = p.Connection.Endpoint;
+            var index = p.Connection.Index;
+            AnsiConsole.MarkupLine($"已載入設定檔: [cyan]{Markup.Escape(selectedProfile ?? "")}[/] ({Markup.Escape(endpoint ?? "")})");
 
             // 帳密輸入
-            var username = TryAsk("請輸入 [yellow]帳號 (Username)[/]:");
+            var userPrompt = $"請輸入帳號 (Username) [[預設: {Markup.Escape(p.Connection.Username ?? "")}]]:";
+            var username = TryAsk(userPrompt);
             if (username == null) continue;
+            if (string.IsNullOrEmpty(username)) username = p.Connection.Username;
 
             var password = TryAsk("請輸入 [yellow]密碼 (Password)[/]:", isSecret: true);
             if (password == null) continue;
@@ -432,45 +600,21 @@ public static class InteractiveWizard
                     // TODO: 實際呼叫 OpenSearch 驗證
                     Thread.Sleep(1000); 
                     Log.Information("連線驗證成功: Endpoint={Endpoint}, Index={Index}, User={User}", endpoint, index, username);
-                    AnsiConsole.MarkupLine($"[green]成功連線至:[/] {Markup.Escape(endpoint)}");
+                    AnsiConsole.MarkupLine($"[green]成功連線至:[/] {Markup.Escape(endpoint ?? "")}");
                 });
-
-            if (isNew)
-            {
-                var saveConfirm = TryConfirm("是否要將此連線資訊儲存為設定檔 (Profile)？");
-                if (saveConfirm == true)
-                {
-                    var profileName = AnsiConsole.Ask<string>("請輸入設定檔名稱 (例如 Prod-Server):");
-                    if (string.IsNullOrEmpty(profileName)) profileName = "New-Profile-" + DateTime.Now.ToString("yyyyMMdd-HHmm");
-                    
-                    var newProfile = new ProfileConfig
-                    {
-                        Connection = new ConnectionConfig
-                        {
-                            Endpoint = endpoint,
-                            Index = index,
-                            Username = "", 
-                            Password = null, 
-                            IgnoreSslErrors = true
-                        }
-                    };
-                    Core.ConfigService.AddProfile(profileName, newProfile);
-                    Log.Information("儲存新設定檔: {ProfileName}", profileName);
-                    AnsiConsole.MarkupLine($"[green]設定檔 {Markup.Escape(profileName)} 已儲存。[/]");
-                }
-            }
 
             _currentEndpoint = endpoint;
             _currentIndex = index;
             _currentUser = username;
             _currentPassword = password;
 
+            RefreshScreen();
             var summary = new Table().Border(TableBorder.Rounded);
             summary.AddColumn("[grey]項目[/]");
             summary.AddColumn("[grey]詳細資訊[/]");
-            summary.AddRow("OpenSearch URL", $"[cyan]{Markup.Escape(endpoint)}[/]");
-            summary.AddRow("Target Index", $"[cyan]{Markup.Escape(index)}[/]");
-            summary.AddRow("User", $"[yellow]{Markup.Escape(username)}[/]");
+            summary.AddRow("OpenSearch URL", $"[cyan]{Markup.Escape(endpoint ?? "")}[/]");
+            summary.AddRow("Target Index", $"[cyan]{Markup.Escape(index ?? "")}[/]");
+            summary.AddRow("User", $"[yellow]{Markup.Escape(username ?? "")}[/]");
 
             AnsiConsole.Write(
                 new Panel(summary)
@@ -479,14 +623,45 @@ public static class InteractiveWizard
                     .Padding(1, 1, 1, 1));
 
             AnsiConsole.MarkupLine("\n[bold]您現在可以開始進行導出作業。[/]");
+            AnsiConsole.MarkupLine("[grey]按任意鍵回主選單...[/]");
+            Console.ReadKey(true);
             return false; 
         }
     }
 
-    /// <summary>
-    /// 自定義選擇方法，支援 Esc 鍵取消
-    /// </summary>
-    private static string? TrySelect(string title, List<string> choices, int pageSize = 10)
+    private static void CreateNewProfile()
+    {
+        AnsiConsole.MarkupLine("[grey](提示: 隨時按 Esc 可取消)[/]");
+        var endpoint = TryAsk("請輸入 OpenSearch [bold]URL[/] (例如 http://localhost:9200):");
+        if (endpoint == null) return;
+
+        var index = TryAsk("請輸入 [bold]Index[/] 名稱 (例如 logs-*):");
+        if (index == null) return;
+
+        var username = TryAsk("請輸入預設 [yellow]帳號 (Username)[/]:");
+        if (username == null) return;
+
+        var profileName = AnsiConsole.Ask<string>("請輸入設定檔名稱 (例如 Prod-Server):");
+        if (string.IsNullOrEmpty(profileName)) profileName = "New-Profile-" + DateTime.Now.ToString("yyyyMMdd-HHmm");
+
+        var newProfile = new ProfileConfig
+        {
+            Connection = new ConnectionConfig
+            {
+                Endpoint = endpoint,
+                Index = index,
+                Username = username,
+                Password = null,
+                IgnoreSslErrors = true
+            }
+        };
+        Core.ConfigService.AddProfile(profileName, newProfile);
+        Log.Information("儲存新設定檔: {ProfileName}", profileName);
+        AnsiConsole.MarkupLine($"[green]設定檔 {Markup.Escape(profileName)} 已儲存。[/]");
+        Thread.Sleep(1000);
+    }
+
+    private static string? TrySelect(string title, List<string> choices, int pageSize = 10, IRenderable? bottomContent = null)
     {
         int selectedIndex = 0;
         int topIndex = 0;
@@ -511,7 +686,7 @@ public static class InteractiveWizard
                 }
                 
                 table.AddEmptyRow();
-                table.AddRow(new Rule().RuleStyle("grey"));
+                table.AddRow("[grey]-------------------------------------------[/]");
                 table.AddRow($"[grey](↑/↓ 選擇, Enter 確認, Esc 返回)  {selectedIndex + 1}/{choices.Count}[/]");
 
                 var panel = new Panel(table)
@@ -520,7 +695,14 @@ public static class InteractiveWizard
                 };
                 panel.BorderColor(Color.Blue);
 
-                ctx.UpdateTarget(panel);
+                if (bottomContent != null)
+                {
+                    ctx.UpdateTarget(new Rows(panel, bottomContent));
+                }
+                else
+                {
+                    ctx.UpdateTarget(panel);
+                }
 
                 var key = Console.ReadKey(true);
                 if (key.Key == ConsoleKey.UpArrow) selectedIndex = (selectedIndex - 1 + choices.Count) % choices.Count;
@@ -531,9 +713,6 @@ public static class InteractiveWizard
         });
     }
 
-    /// <summary>
-    /// 自定義確認方法，支援 Esc 鍵取消
-    /// </summary>
     private static bool? TryConfirm(string message)
     {
         AnsiConsole.Markup($"{message} [grey](y/n/Esc)[/] ");
@@ -543,24 +722,24 @@ public static class InteractiveWizard
             if (key.Key == ConsoleKey.Y)
             {
                 AnsiConsole.MarkupLine("[green]Yes[/]");
+                Log.Information("使用者確認: {Message} -> Yes", message);
                 return true;
             }
             if (key.Key == ConsoleKey.N)
             {
                 AnsiConsole.MarkupLine("[red]No[/]");
+                Log.Information("使用者確認: {Message} -> No", message);
                 return false;
             }
             if (key.Key == ConsoleKey.Escape)
             {
                 AnsiConsole.WriteLine();
+                Log.Information("使用者確認: {Message} -> Cancel (Esc)", message);
                 return null;
             }
         }
     }
 
-    /// <summary>
-    /// 自定義輸入方法，支援按 Esc 鍵取消
-    /// </summary>
     private static string? TryAsk(string prompt, bool isSecret = false)
     {
         AnsiConsole.Markup(prompt + " ");
@@ -571,12 +750,17 @@ public static class InteractiveWizard
             if (key.Key == ConsoleKey.Enter)
             {
                 Console.WriteLine();
-                return input.ToString();
+                var result = input.ToString();
+                if (isSecret)
+                    Log.Information("使用者輸入: {Prompt} -> [SECRET]", prompt);
+                else
+                    Log.Information("使用者輸入: {Prompt} -> {Value}", prompt, result);
+                return result;
             }
             if (key.Key == ConsoleKey.Escape)
             {
                 Console.WriteLine();
-                Log.Information("使用者按 Esc 取消輸入");
+                Log.Information("使用者按 Esc 取消輸入: {Prompt}", prompt);
                 return null;
             }
             if (key.Key == ConsoleKey.Backspace && input.Length > 0)

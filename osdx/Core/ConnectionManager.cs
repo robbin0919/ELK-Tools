@@ -2,6 +2,7 @@ using OpenSearch.Client;
 using OpenSearch.Net;
 using osdx.Models;
 using System.Net;
+using Serilog;
 
 namespace osdx.Core;
 
@@ -12,7 +13,10 @@ public static class ConnectionManager
         var nodes = new[] { new Uri(config.Endpoint) };
         var connectionPool = new StaticConnectionPool(nodes);
         var settings = new ConnectionSettings(connectionPool)
-            .DefaultIndex(config.Index);
+            .DefaultIndex(config.Index)
+            .DisablePing() // 禁用首次連線的 Ping，避免因超時導致失敗
+            .DisableDirectStreaming() // 開啟後可在 DebugInformation 看到完整的 Request/Response
+            .RequestTimeout(TimeSpan.FromSeconds(30)); // 設定較長的超時時間
 
         if (!string.IsNullOrEmpty(config.Username) && !string.IsNullOrEmpty(password))
         {
@@ -29,6 +33,9 @@ public static class ConnectionManager
 
     public static (bool Success, string Message) TestQuery(ConnectionConfig config, string? password, object query)
     {
+        Log.Information("開始 OpenSearch 查詢測試: Endpoint={Endpoint}, Index={Index}, User={User}", 
+            config.Endpoint, config.Index, config.Username);
+
         try
         {
             var client = GetClient(config, password);
@@ -46,12 +53,21 @@ public static class ConnectionManager
             }
             else
             {
-                return (false, $"伺服器回傳錯誤: {response.ApiCall.DebugInformation}");
+                // 保持日誌中有詳細的 DebugInformation
+                Log.Warning("OpenSearch 查詢語法測試失敗：{DebugInformation}", response.ApiCall.DebugInformation);
+                
+                // 從結果中提取對使用者友善的簡短錯誤訊息
+                var friendlyMessage = response.ApiCall.OriginalException?.Message 
+                                     ?? response.ServerError?.Error?.Reason 
+                                     ?? $"伺服器回應錯誤 (HTTP {response.ApiCall.HttpStatusCode})";
+
+                return (false, friendlyMessage);
             }
         }
         catch (Exception ex)
         {
-            return (false, $"連線或執行出錯: {ex.Message}");
+            Log.Error(ex, "執行查詢測試時發生未預期的錯誤");
+            return (false, ex.Message);
         }
     }
 }
