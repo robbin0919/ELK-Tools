@@ -139,8 +139,17 @@ public static class DataStreamer
 
     private static async Task WriteCsvBatchAsync(StreamWriter writer, IReadOnlyCollection<IHit<Dictionary<string, object>>> hits, string[] requestedFields, bool isFirstBatch)
     {
-        // 若未指定 Fields，則從第一筆資料動態偵測 Headers
-        var headers = requestedFields.Length > 0 ? requestedFields : hits.First().Source.Keys.ToArray();
+        // 標頭處理
+        string[] headers;
+        if (requestedFields.Length > 0)
+        {
+            headers = requestedFields;
+        }
+        else
+        {
+            // 進階標頭偵測：掃描本批次所有資料，收集所有出現過的 Key (確保異質資料欄位不遺漏)
+            headers = hits.SelectMany(h => h.Source.Keys).Distinct().ToArray();
+        }
 
         if (isFirstBatch)
         {
@@ -153,8 +162,27 @@ public static class DataStreamer
             {
                 if (hit.Source.TryGetValue(h, out var val) && val != null)
                 {
-                    var str = val.ToString() ?? "";
-                    // 處理 CSV 轉義: 若包含逗號、雙引號或換行，則用雙引號包起來並轉義雙引號
+                    // 更強韌的轉字串邏輯
+                    string str;
+                    if (val is string s) 
+                    {
+                        str = s;
+                    }
+                    else if (val is DateTime dt)
+                    {
+                        str = dt.ToString("yyyy-MM-ddTHH:mm:ssZ");
+                    }
+                    else if (val is JsonElement je)
+                    {
+                        str = je.ValueKind == JsonValueKind.String ? je.GetString() ?? "" : je.GetRawText();
+                    }
+                    else 
+                    {
+                        // 處理數值或其它物件
+                        str = val.ToString() ?? "";
+                    }
+
+                    // 處理 CSV 轉義
                     if (str.Contains(",") || str.Contains("\"") || str.Contains("\n") || str.Contains("\r"))
                     {
                         return $"\"{str.Replace("\"", "\"\"")}\"";

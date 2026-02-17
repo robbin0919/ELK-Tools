@@ -144,3 +144,29 @@ powershell -ExecutionPolicy Bypass -File ELK-tools/osdx/Scripts/Ingest-OfficialB
 ```
 
 完成後請在 OSDX 中指定 Index 為 `bank` 進行匯出測試。
+
+---
+
+## 9. 大型 logs.jsonl 資料匯入
+
+如果您擁有 `logs.jsonl` 原始資料檔（約 50MB），可以使用此腳本進行批量注入。這份資料包含極其豐富的欄位與複雜的 JSON 結構，是壓力測試與功能驗證的最佳選擇。
+
+### 執行方式 (Windows CMD)
+```cmd
+powershell -ExecutionPolicy Bypass -File ELK-tools/osdx/Scripts/Ingest-LogsJsonl.ps1
+```
+
+成功後會根據檔案內容建立多個索引（如 `logstash-2015.05.18` 等）。此資料集非常適合測試 OSDX 在匯出複雜物件陣列（如 `relatedContent`）時的表現。
+
+---
+
+## 8. 官方範例日誌匯入 (Logstash Logs)
+
+此範例從官方來源下載經典的 Logstash 格式日誌（三份 NDJSON 檔案），包含真實的 IP、User-Agent 與多樣化的 Web 請求。
+
+### 執行方式 (Windows CMD)
+```cmd
+powershell -ExecutionPolicy Bypass -File ELK-tools/osdx/Scripts/Ingest-OfficialLogData.ps1
+```
+
+成功後會建立索引: `logstash-logs`。此索引資料非常適合測試 OSDX 對日期欄位與複雜字串的處理。
