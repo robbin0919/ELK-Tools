@@ -3,15 +3,30 @@ using Spectre.Console;
 using Serilog;
 using osdx.Models;
 using osdx.UI;
+using System.Text.Json;
+
+// 預讀取設定以取得日誌等級
+string logLevel = "Information";
+try
+{
+    if (File.Exists("config.json"))
+    {
+        var json = File.ReadAllText("config.json");
+        var config = JsonSerializer.Deserialize<AppConfig>(json);
+        if (config?.Settings?.LogLevel != null) logLevel = config.Settings.LogLevel;
+    }
+}
+catch { /* 忽略讀取錯誤，使用預設值 */ }
 
 // 初始化日誌
-Log.Logger = new LoggerConfiguration()
-    .MinimumLevel.Verbose() 
+var logConfig = new LoggerConfiguration()
+    .MinimumLevel.Is(Enum.Parse<Serilog.Events.LogEventLevel>(logLevel)) 
     .WriteTo.File("logs/osdx-.log", 
         rollingInterval: RollingInterval.Day, 
         outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] {Message:lj}{NewLine}{Exception}",
-        flushToDiskInterval: TimeSpan.FromSeconds(1)) // 每秒強制刷新到磁碟
-    .CreateLogger();
+        flushToDiskInterval: TimeSpan.FromSeconds(1));
+
+Log.Logger = logConfig.CreateLogger();
 
 try 
 {

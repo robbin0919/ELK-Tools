@@ -77,9 +77,7 @@ public static class InteractiveWizard
                 skipWait = HandleManagementFlow();
                 break;
             case "4. 系統設定 (SSL 驗證等)":
-                RefreshScreen();
-                Log.Information("進入系統設定");
-                AnsiConsole.MarkupLine("[magenta]進入系統設定...[/]");
+                skipWait = HandleSettingsFlow();
                 break;
         }
 
@@ -91,6 +89,48 @@ public static class InteractiveWizard
             {
                 Log.Information("使用者按下 Esc 鍵返回主選單");
             }
+        }
+    }
+
+    private static bool HandleSettingsFlow()
+    {
+        while (true)
+        {
+            RefreshScreen();
+            var config = Core.ConfigService.LoadConfig();
+            
+            var settingsTable = new Table().Border(TableBorder.Rounded);
+            settingsTable.AddColumn("項目");
+            settingsTable.AddColumn("目前值");
+            settingsTable.AddRow("1. Global Ignore SSL Errors", config.Settings.GlobalIgnoreSslErrors ? "[green]True[/]" : "[red]False[/]");
+            settingsTable.AddRow("2. Log Level", $"[yellow]{config.Settings.LogLevel}[/]");
+
+            var choice = TrySelect("系統設定中心：", new List<string> {
+                "1. 切換全局 SSL 忽略狀態",
+                "2. 修改日誌等級 (Log Level)",
+                "返回主選單"
+            }, 10, settingsTable);
+
+            if (choice == null || choice == "返回主選單") return true;
+
+            switch (choice)
+            {
+                case "1. 切換全局 SSL 忽略狀態":
+                    config.Settings.GlobalIgnoreSslErrors = !config.Settings.GlobalIgnoreSslErrors;
+                    break;
+                case "2. 修改日誌等級 (Log Level)":
+                    var levels = new List<string> { "Verbose", "Debug", "Information", "Warning", "Error", "Fatal", "返回" };
+                    var selectedLevel = TrySelect("請選擇日誌等級 (重啟程式後生效)：", levels);
+                    if (selectedLevel != null && selectedLevel != "返回")
+                    {
+                        config.Settings.LogLevel = selectedLevel;
+                    }
+                    break;
+            }
+
+            Core.ConfigService.SaveConfig(config);
+            AnsiConsole.MarkupLine("[green]✅ 系統設定已更新。[/]");
+            Thread.Sleep(500);
         }
     }
 
@@ -686,6 +726,7 @@ public static class InteractiveWizard
                         table.AddRow($"  {Markup.Escape(choices[i])}");
                 }
                 
+                // 使用簡單的分隔符號代替 Rule，避免撐開寬度
                 table.AddEmptyRow();
                 table.AddRow("[grey]-------------------------------------------[/]");
                 table.AddRow($"[grey](↑/↓ 選擇, Enter 確認, Esc 返回)  {selectedIndex + 1}/{choices.Count}[/]");

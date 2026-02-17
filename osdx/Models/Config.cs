@@ -4,6 +4,13 @@ public class AppConfig
 {
     public Dictionary<string, ProfileConfig> Profiles { get; set; } = new();
     public string DefaultProfile { get; set; } = string.Empty;
+    public SettingsConfig Settings { get; set; } = new();
+}
+
+public class SettingsConfig
+{
+    public bool GlobalIgnoreSslErrors { get; set; } = false;
+    public string LogLevel { get; set; } = "Information";
 }
 
 public class ProfileConfig
