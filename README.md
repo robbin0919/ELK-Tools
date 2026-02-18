@@ -11,7 +11,7 @@
 *   **D**: **D**ata (資料)
 *   **X**: **X**port (匯出 / 擷取)
 
-![OSDX Interface](./Screenshot%202026-02-18%20105108.png)
+![OSDX Interface](./osdx/DOC/images/osdx-interface.png)
 
 *   **海量匯出**：採用 Scroll API 機制，穩定處理 50 萬筆以上資料，不受 `max_result_window` (10,000 筆) 限制。
 *   **互動式體驗 (TUI)**：搭載 `Spectre.Console` 打造美觀的終端機介面，提供引導式設定選單與即時進度條。
