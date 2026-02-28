@@ -6,6 +6,10 @@
  * ────────────────────────────────────────────────────────────────
  * 日期         版本    修改人員        修改說明
  * ────────────────────────────────────────────────────────────────
+ * 2026-03-01   v1.4.4  Robbin Lee      1. 新增「關於」功能顯示版本與開發者資訊
+ *                                       2. 簡化選單文字「關於 (版本與開發人員)」→「關於」
+ *                                       3. 更新 GitHub 專案連結
+ *                                       4. 調整分隔線為兼容字符
  * 2026-03-01   v1.4.3  Robbin Lee      1. 新增日期輸入驗證與重試機制
  *                                       2. 格式錯誤時要求重新輸入而非直接使用預設值
  *                                       3. 新增結束日期不得早於起始日期的驗證
@@ -60,6 +64,7 @@ public static class InteractiveWizard
                         "2. 開始執行資料導出",
                         "3. 管理設定檔 (編輯/建立/刪除)",
                         "4. 系統設定 (SSL 驗證等)",
+                        "5. 關於",
                         "---",
                         "Exit (結束程式)"
                     });
@@ -112,6 +117,9 @@ public static class InteractiveWizard
                 break;
             case "4. 系統設定 (SSL 驗證等)":
                 skipWait = HandleSettingsFlow();
+                break;
+            case "5. 關於":
+                skipWait = HandleAboutFlow();
                 break;
         }
 
@@ -1119,6 +1127,39 @@ public static class InteractiveWizard
         }
         
         return element;
+    }
+
+    private static bool HandleAboutFlow()
+    {
+        RefreshScreen();
+        
+        var panel = new Panel(new Markup(
+            "[bold cyan]OSDX[/] - [grey]OpenSearch Data Xport[/]\n" +
+            "[grey]─────────────────────────────────────────[/]\n\n" +
+            "[yellow]版本資訊：[/]\n" +
+            "  • 目前版本：[green]v1.4.4[/]\n" +
+            "  • 編譯日期：[cyan]2026-03-01[/]\n" +
+            "  • 執行環境：[cyan].NET 8.0[/]\n\n" +
+            "[yellow]開發團隊：[/]\n" +
+            "  • 主要開發：[green]Robbin Lee[/]\n" +
+            "  • GitHub：[blue]https://github.com/robbin0919/ELK-Tools[/]\n\n" +
+            "[yellow]主要功能：[/]\n" +
+            "  • OpenSearch 資料導出工具\n" +
+            "  • 支援自訂查詢與日期範圍\n" +
+            "  • 互動式引導操作介面\n" +
+            "  • 多設定檔管理\n\n" +
+            "[grey]© 2026 All Rights Reserved[/]"
+        ))
+        {
+            Header = new PanelHeader("[bold blue] 關於 OSDX [/]", Justify.Center),
+            Border = BoxBorder.Double,
+            BorderStyle = new Style(Color.Blue),
+            Padding = new Padding(2, 1)
+        };
+        
+        AnsiConsole.Write(panel);
+        
+        return false; // 需要等待使用者按鍵
     }
 
     private static string? TryAsk(string prompt, bool isSecret = false)

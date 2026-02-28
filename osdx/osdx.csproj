@@ -7,6 +7,12 @@
     <Nullable>enable</Nullable>
     <PublishSingleFile>true</PublishSingleFile>
     <SelfContained>true</SelfContained>
+    <Version>1.4.4</Version>
+    <AssemblyVersion>1.4.4.0</AssemblyVersion>
+    <FileVersion>1.4.4.0</FileVersion>
+    <Authors>Robbin Lee</Authors>
+    <Product>OSDX - OpenSearch Data Xport</Product>
+    <Description>OpenSearch 資料導出工具 - 支援互動式引導操作</Description>
   </PropertyGroup>
 
   <ItemGroup>
