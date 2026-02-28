@@ -1,7 +1,34 @@
+/*
+ * 檔案名稱: DataStreamer.cs
+ * 專案: OSDX (OpenSearch Data Xport)
+ * 
+ * 修改歷程:
+ * ────────────────────────────────────────────────────────────────
+ * 日期         版本    修改人員        修改說明
+ * ────────────────────────────────────────────────────────────────
+ * 2026-02-28   v1.3.4  Robbin Lee      1. 進度條時間顯示改為已執行時間（ElapsedTimeColumn）
+ *                                       2. 移除剩餘時間預估，顯示實際執行時長
+ * 2026-02-28   v1.3.3  Robbin Lee      1. 改用粗體 ASCII 字符（█/·）取代細線進度條
+ *                                       2. 建立 CustomProgressBarColumn 自訂欄位
+ *                                       3. 大幅提升進度條視覺辨識度
+ * 2026-02-28   v1.3.2  Robbin Lee      1. 進度條加寬至 50 字元並添加彩色樣式
+ *                                       2. 新增傳輸速度顯示
+ *                                       3. 優化進度條視覺效果（綠色/灰色配色）
+ * 2026-02-28   v1.3.1  Robbin Lee      1. 優化進度條顯示（加寬至40字元，新增已下載筆數）
+ *                                       2. 修正 LowLevel API 的 Scroll 參數傳遞方式
+ *                                       3. 使用 QueryString 參數正確處理 TimeSpan 轉換
+ * 2026-02-28   v1.3    Robbin Lee      1. 實現智能查詢包裝機制
+ *                                       2. 完整 DSL 使用 LowLevel API 直接發送
+ *                                       3. 簡單查詢條件使用 High-Level API 包裝
+ *                                       4. 修正資料導出時的查詢雙重包裝問題
+ * ────────────────────────────────────────────────────────────────
+ */
+
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using OpenSearch.Client;
+using OpenSearch.Net;
 using osdx.Models;
 using Spectre.Console;
 using Serilog;
@@ -34,30 +61,95 @@ public static class DataStreamer
         try
         {
             await AnsiConsole.Progress()
+                .AutoRefresh(true)
+                .AutoClear(false)
+                .HideCompleted(false)
                 .Columns(new ProgressColumn[] 
                 {
-                    new TaskDescriptionColumn(),    // 任務描述
-                    new ProgressBarColumn(),        // 進度條
-                    new PercentageColumn(),         // 百分比
-                    new RemainingTimeColumn(),      // 預估剩餘時間
-                    new SpinnerColumn(),            // 旋轉動畫
+                    new TaskDescriptionColumn(),                                    // 任務描述
+                    new CustomProgressBarColumn()                                   // 自訂粗體進度條
+                    { 
+                        Width = 50,
+                        CompletedChar = '█',                                        // 使用實心方塊
+                        RemainingChar = '·'                                         // 使用中間點（編碼更安全）
+                    },
+                    new PercentageColumn() { Style = new Style(Color.Cyan1) },     // 百分比
+                    new DownloadedColumn(),                                         // 已下載筆數
+                    new TransferSpeedColumn(),                                      // 速度
+                    new ElapsedTimeColumn() { Style = new Style(Color.Blue) },     // 已執行時間
                 })
                 .StartAsync(async ctx =>
                 {
-                    var exportTask = ctx.AddTask($"[green]正在從 {connection.Index} 匯出資料...[/]");
+                    var exportTask = ctx.AddTask($"[bold cyan]正在從 {connection.Index} 匯出資料[/]");
                     
                     using var streamWriter = new StreamWriter(filePath, false, Encoding.UTF8);
 
                     // 1. Initial Search (建立 Scroll 快照)
                     var queryJson = JsonSerializer.Serialize(query);
-                    var searchResponse = await client.SearchAsync<Dictionary<string, object>>(s => s
-                        .Index(connection.Index)
-                        .From(0)
-                        .Size(export.BatchSize)
-                        .Scroll(export.ScrollTimeout)
-                        .Query(q => q.Raw(queryJson))
-                        .Source(src => export.Fields.Length > 0 ? src.Includes(f => f.Fields(export.Fields)) : src.IncludeAll())
-                    );
+                    
+                    // 智能查詢包裝：判斷是完整 DSL 還是簡單查詢條件
+                    ISearchResponse<Dictionary<string, object>> searchResponse;
+                    
+                    try
+                    {
+                        var queryObj = JsonSerializer.Deserialize<Dictionary<string, object>>(queryJson);
+                        
+                        // 檢查是否為完整 DSL（包含 "query" 頂層字段）
+                        if (queryObj != null && queryObj.ContainsKey("query"))
+                        {
+                            // 完整 DSL：使用 LowLevel API 直接發送
+                            Log.Debug("偵測到完整 DSL 查詢，使用 LowLevel API 直接發送");
+                            
+                            // 構建完整請求體，加入 scroll、size、_source 等參數
+                            var fullRequest = new Dictionary<string, object>(queryObj);
+                            if (!fullRequest.ContainsKey("size"))
+                                fullRequest["size"] = export.BatchSize;
+                            
+                            if (export.Fields.Length > 0)
+                            {
+                                fullRequest["_source"] = export.Fields;
+                            }
+                            
+                            var fullRequestJson = JsonSerializer.Serialize(fullRequest);
+                            
+                            // 使用 LowLevel API，將 scroll 作為查詢字符串參數傳遞
+                            var lowLevelResponse = client.LowLevel.Search<SearchResponse<Dictionary<string, object>>>(
+                                connection.Index,
+                                PostData.String(fullRequestJson),
+                                new SearchRequestParameters { QueryString = new Dictionary<string, object> { { "scroll", export.ScrollTimeout } } }
+                            );
+                            
+                            searchResponse = lowLevelResponse;
+                        }
+                        else
+                        {
+                            // 簡單查詢條件：使用 High-Level API 自動包裝
+                            Log.Debug("偵測到簡單查詢條件，使用 High-Level API 包裝");
+                            
+                            searchResponse = await client.SearchAsync<Dictionary<string, object>>(s => s
+                                .Index(connection.Index)
+                                .From(0)
+                                .Size(export.BatchSize)
+                                .Scroll(export.ScrollTimeout)
+                                .Query(q => q.Raw(queryJson))
+                                .Source(src => export.Fields.Length > 0 ? src.Includes(f => f.Fields(export.Fields)) : src.IncludeAll())
+                            );
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Warning(ex, "查詢結構解析失敗，使用預設 High-Level API 包裝");
+                        
+                        // 解析失敗時回退到原始方法
+                        searchResponse = await client.SearchAsync<Dictionary<string, object>>(s => s
+                            .Index(connection.Index)
+                            .From(0)
+                            .Size(export.BatchSize)
+                            .Scroll(export.ScrollTimeout)
+                            .Query(q => q.Raw(queryJson))
+                            .Source(src => export.Fields.Length > 0 ? src.Includes(f => f.Fields(export.Fields)) : src.IncludeAll())
+                        );
+                    }
 
                     if (!searchResponse.IsValid)
                     {

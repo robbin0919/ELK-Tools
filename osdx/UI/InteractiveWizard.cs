@@ -1,3 +1,37 @@
+/*
+ * 檔案名稱: InteractiveWizard.cs
+ * 專案: OSDX (OpenSearch Data Xport)
+ * 
+ * 修改歷程:
+ * ────────────────────────────────────────────────────────────────
+ * 日期         版本    修改人員        修改說明
+ * ────────────────────────────────────────────────────────────────
+ * 2026-03-01   v1.4.3  Robbin Lee      1. 新增日期輸入驗證與重試機制
+ *                                       2. 格式錯誤時要求重新輸入而非直接使用預設值
+ *                                       3. 新增結束日期不得早於起始日期的驗證
+ *                                       4. 改善使用者體驗，提供明確的錯誤提示
+ *                                       5. 修正 CS0103 編譯錯誤（使用 usedEscape 變數）
+ *                                       6. 修正 CS0165 編譯錯誤（變數初始化）
+ * 2026-03-01   v1.4.2  Robbin Lee      1. 修正按 Esc 或選擇 No 時的邏輯錯誤
+ *                                       2. 現在無論選擇是否均使用 24 小時預設值
+ *                                       3. Yes 可自訂日期，No/Esc 直接使用24小時
+ * 2026-03-01   v1.4.1  Robbin Lee      1. 修改日期範圍預設值從 15 天改為 24 小時
+ *                                       2. 更新所有相關提示文字和說明
+ * 2026-02-28   v1.4    Robbin Lee      1. 新增日期範圍自訂功能
+ *                                       2. 執行導出前可動態設定起始/結束日期
+ *                                       3. 自動偵測查詢中的 @timestamp range
+ *                                       4. 支援預設值（最近 15 天）
+ * 2026-02-28   v1.2    Robbin Lee      1. 修正長查詢顯示問題
+ *                                       2. 限制查詢預覽最多顯示 15 行
+ *                                       3. 超過時顯示省略提示，避免選項被推出螢幕外
+ * 2026-02-28   v1.1    Robbin Lee      1. 增強帳號輸入驗證邏輯
+ *                                       2. 自動偵測 Windows 域名格式（domain\user）
+ *                                       3. 提供互動式域名前綴移除功能
+ *                                       4. 新增使用者友善的格式提示訊息
+ *                                       5. 加強帳號必填校驗
+ * ────────────────────────────────────────────────────────────────
+ */
+
 using Spectre.Console;
 using Serilog;
 using osdx.Models;
@@ -358,13 +392,38 @@ public static class InteractiveWizard
             else
             {
                 RefreshScreen();
-                // 準備該查詢的內容作為底部顯示
+                // 準備該查詢的內容作為底部顯示（限制顯示行數避免選項被推出螢幕外）
                 var queryJson = JsonSerializer.Serialize(profile.Queries[selectedQuery], new JsonSerializerOptions { WriteIndented = true });
-                var bottomJson = new Rows(
+                var queryLines = queryJson.Split('\n');
+                
+                // 限制最多顯示 15 行，避免長查詢導致選項看不到
+                const int maxDisplayLines = 15;
+                string displayJson;
+                bool isTruncated = false;
+                
+                if (queryLines.Length > maxDisplayLines)
+                {
+                    displayJson = string.Join('\n', queryLines.Take(maxDisplayLines));
+                    isTruncated = true;
+                }
+                else
+                {
+                    displayJson = queryJson;
+                }
+                
+                var bottomContent = new List<IRenderable>
+                {
                     new Text(""),
-                    new Markup($"[grey]查詢語句 [yellow]{selectedQuery}[/] 的目前內容：[/]"),
-                    new Text(queryJson)
-                );
+                    new Markup($"[grey]查詢語句 [yellow]{selectedQuery}[/] 的內容預覽：[/]"),
+                    new Text(displayJson)
+                };
+                
+                if (isTruncated)
+                {
+                    bottomContent.Add(new Markup($"[dim]...\n(省略 {queryLines.Length - maxDisplayLines} 行，完整內容請選擇「編輯內容」查看)[/]"));
+                }
+                
+                var bottomJson = new Rows(bottomContent.ToArray());
 
                 var action = TrySelect($"查詢語句 [yellow]{selectedQuery}[/] 的操作：", new List<string> {
                     "1. 編輯內容 (Edit)",
@@ -422,12 +481,36 @@ public static class InteractiveWizard
         RefreshScreen();
         AnsiConsole.Write(new Rule($"編輯 [cyan]{profileName}[/] - [yellow]{queryName}[/] 的 Query").LeftJustified());
         
+        // 限制顯示行數，避免長查詢導致選項看不到
+        var queryLines = currentQueryJson.Split('\n');
+        const int maxDisplayLines = 15;
+        string displayJson;
+        bool isTruncated = false;
+        
+        if (queryLines.Length > maxDisplayLines)
+        {
+            displayJson = string.Join('\n', queryLines.Take(maxDisplayLines));
+            isTruncated = true;
+        }
+        else
+        {
+            displayJson = currentQueryJson;
+        }
+        
         // 建立底部的 JSON 顯示區塊
-        var bottomContent = new Rows(
+        var bottomContentList = new List<IRenderable>
+        {
             new Text(""),
-            new Markup("[grey]目前查詢語句：[/]"),
-            new Text(currentQueryJson)
-        );
+            new Markup("[grey]目前查詢語句（預覽）：[/]"),
+            new Text(displayJson)
+        };
+        
+        if (isTruncated)
+        {
+            bottomContentList.Add(new Markup($"[dim]...\n(省略 {queryLines.Length - maxDisplayLines} 行)[/]"));
+        }
+        
+        var bottomContent = new Rows(bottomContentList.ToArray());
 
         var choice = TrySelect("請選擇編輯方式：", new List<string> {
                     "使用快速模板 (Match All)",
@@ -582,8 +665,20 @@ public static class InteractiveWizard
 
         Log.Information("開始執行資料導出作業: Endpoint={Endpoint}, Index={Index}, Query={QueryName}", _currentEndpoint, _currentIndex, selectedQueryName);
         
+        // 取得原始查詢
+        var originalQuery = currentProfile.Queries[selectedQueryName];
+        var queryToUse = originalQuery;
+        
+        // 檢查並處理日期範圍參數化
+        queryToUse = HandleDateRangeCustomization(originalQuery);
+        if (queryToUse == null)
+        {
+            AnsiConsole.MarkupLine("[yellow]已取消導出操作。[/]");
+            return true;
+        }
+        
         // 執行導出
-        await Core.DataStreamer.ExportAsync(currentProfile.Connection, currentProfile.Export, currentProfile.Queries[selectedQueryName], _currentPassword);
+        await Core.DataStreamer.ExportAsync(currentProfile.Connection, currentProfile.Export, queryToUse, _currentPassword);
 
         AnsiConsole.MarkupLine("\n[grey]匯出作業結束。按任意鍵回主選單...[/]");
         Console.ReadKey(true);
@@ -631,10 +726,27 @@ public static class InteractiveWizard
             string? username = null;
             while (true)
             {
+                AnsiConsole.MarkupLine("[grey]💡 提示：OpenSearch 不接受域名格式 (例如 'domain\\user')，請只輸入使用者名稱[/]");
                 var userPrompt = $"請輸入帳號 (Username) [[預設: {Markup.Escape(p.Connection.Username ?? "")}]]:";
                 username = TryAsk(userPrompt);
                 if (username == null) break; // Esc pressed
                 if (string.IsNullOrEmpty(username)) username = p.Connection.Username;
+                
+                // 檢查是否包含反斜線（域名格式）
+                if (!string.IsNullOrEmpty(username) && username.Contains("\\"))
+                {
+                    AnsiConsole.MarkupLine("[yellow]⚠ 警告：偵測到域名格式 (含 '\\')，OpenSearch 可能不接受此格式。[/]");
+                    var removePrefix = TryConfirm("是否自動移除域名前綴？(例如 'pcs\\robbinlee' → 'robbinlee')");
+                    if (removePrefix == true)
+                    {
+                        username = username.Split('\\').Last();
+                        AnsiConsole.MarkupLine($"[green]已調整為: {Markup.Escape(username)}[/]");
+                    }
+                    else if (removePrefix == null)
+                    {
+                        continue; // 使用者按 Esc，重新輸入
+                    }
+                }
                 
                 if (!string.IsNullOrEmpty(username)) break;
                 AnsiConsole.MarkupLine("[red]❌ 錯誤：帳號不可為空值，請重新輸入。[/]");
@@ -812,6 +924,201 @@ public static class InteractiveWizard
                 return null;
             }
         }
+    }
+
+    private static object? HandleDateRangeCustomization(object query)
+    {
+        try
+        {
+            var queryJson = JsonSerializer.Serialize(query);
+            
+            if (!queryJson.Contains("@timestamp") || !queryJson.Contains("\"range\""))
+            {
+                return query;
+            }
+            
+            AnsiConsole.MarkupLine("[yellow]偵測到查詢包含日期範圍條件。[/]");
+            var customize = TryConfirm("是否要自訂日期範圍？(否則使用系統時間起算24小時)");
+            
+            // 初始化為預設值（24小時），避免編譯器警告
+            DateTime fromDate = DateTime.UtcNow.AddDays(-1);
+            DateTime toDate = DateTime.UtcNow;
+            bool usedEscape = false; // 追蹤是否按了 Esc
+            
+            if (customize == true)
+            {
+                // 使用者選擇自訂：讓使用者輸入日期
+                AnsiConsole.MarkupLine("\n[cyan]請輸入日期範圍：[/]");
+                AnsiConsole.MarkupLine("[grey]格式範例: 2026-02-20 或 2026-02-20T10:30:00[/]");
+                AnsiConsole.MarkupLine("[grey]提示: 直接按 Enter 使用預設值 (系統時間起算24小時)，按 Esc 取消[/]\n");
+                
+                // 輸入起始日期（循環直到成功或取消）
+                while (true)
+                {
+                    var fromDateStr = TryAsk("起始日期 (gte) [[預設: 24小時前]]:");
+                    
+                    if (fromDateStr == null)
+                    {
+                        // 按 Esc 取消
+                        AnsiConsole.MarkupLine("[yellow]已取消日期輸入，使用系統時間起算24小時。[/]");
+                        fromDate = DateTime.UtcNow.AddDays(-1);
+                        toDate = DateTime.UtcNow;
+                        usedEscape = true;
+                        break;
+                    }
+                    
+                    if (string.IsNullOrWhiteSpace(fromDateStr))
+                    {
+                        // 使用預設值
+                        fromDate = DateTime.UtcNow.AddDays(-1);
+                        AnsiConsole.MarkupLine($"[grey]使用預設起始日期: {fromDate:yyyy-MM-dd HH:mm:ss}[/]");
+                        break;
+                    }
+                    
+                    if (DateTime.TryParse(fromDateStr, out fromDate))
+                    {
+                        fromDate = DateTime.SpecifyKind(fromDate, DateTimeKind.Utc);
+                        AnsiConsole.MarkupLine($"[green]✓ 起始日期: {fromDate:yyyy-MM-dd HH:mm:ss}[/]");
+                        break;
+                    }
+                    
+                    // 格式錯誤，顯示錯誤訊息並重新輸入
+                    AnsiConsole.MarkupLine("[red]✗ 日期格式錯誤！請重新輸入或按 Esc 取消。[/]");
+                }
+                
+                // 如果起始日期沒有按 Esc，繼續輸入結束日期
+                if (!usedEscape)
+                {
+                    while (true)
+                    {
+                        var toDateStr = TryAsk("結束日期 (lte) [[預設: 現在]]:");
+                        
+                        if (toDateStr == null)
+                        {
+                            // 按 Esc 取消
+                            AnsiConsole.MarkupLine("[yellow]已取消日期輸入，使用系統時間起算24小時。[/]");
+                            fromDate = DateTime.UtcNow.AddDays(-1);
+                            toDate = DateTime.UtcNow;
+                            break;
+                        }
+                        
+                        if (string.IsNullOrWhiteSpace(toDateStr))
+                        {
+                            // 使用預設值
+                            toDate = DateTime.UtcNow;
+                            AnsiConsole.MarkupLine($"[grey]使用預設結束日期: {toDate:yyyy-MM-dd HH:mm:ss}[/]");
+                            break;
+                        }
+                        
+                        if (DateTime.TryParse(toDateStr, out toDate))
+                        {
+                            toDate = DateTime.SpecifyKind(toDate, DateTimeKind.Utc);
+                            
+                            // 驗證結束日期不能早於起始日期
+                            if (toDate < fromDate)
+                            {
+                                AnsiConsole.MarkupLine("[red]✗ 結束日期不能早於起始日期！請重新輸入。[/]");
+                                continue;
+                            }
+                            
+                            AnsiConsole.MarkupLine($"[green]✓ 結束日期: {toDate:yyyy-MM-dd HH:mm:ss}[/]");
+                            break;
+                        }
+                        
+                        // 格式錯誤，顯示錯誤訊息並重新輸入
+                        AnsiConsole.MarkupLine("[red]✗ 日期格式錯誤！請重新輸入或按 Esc 取消。[/]");
+                    }
+                }
+            }
+            else
+            {
+                // 使用者選擇 No 或按 Esc：直接使用 24 小時預設值
+                fromDate = DateTime.UtcNow.AddDays(-1);
+                toDate = DateTime.UtcNow;
+                AnsiConsole.MarkupLine($"[grey]使用系統時間起算24小時: {fromDate:yyyy-MM-dd HH:mm:ss} 至 {toDate:yyyy-MM-dd HH:mm:ss}[/]");
+            }
+            
+            var gteValue = fromDate.ToString("yyyy-MM-ddTHH:mm:ss.fffZ");
+            var lteValue = toDate.ToString("yyyy-MM-ddTHH:mm:ss.fffZ");
+            
+            AnsiConsole.MarkupLine($"\n[green]日期範圍已設定:[/]");
+            AnsiConsole.MarkupLine($"  從: [cyan]{gteValue}[/]");
+            AnsiConsole.MarkupLine($"  到: [cyan]{lteValue}[/]\n");
+            
+            var modifiedJson = ReplaceTimestampRange(queryJson, gteValue, lteValue);
+            var modifiedQuery = JsonSerializer.Deserialize<JsonElement>(modifiedJson);
+            return modifiedQuery;
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "處理日期範圍自訂時發生錯誤");
+            AnsiConsole.MarkupLine($"[red]處理日期時發生錯誤: {Markup.Escape(ex.Message)}[/]");
+            return query;
+        }
+    }
+    
+    private static string ReplaceTimestampRange(string queryJson, string gteValue, string lteValue)
+    {
+        try
+        {
+            var queryObj = JsonSerializer.Deserialize<JsonElement>(queryJson);
+            var modifiedObj = ReplaceTimestampInElement(queryObj, gteValue, lteValue);
+            return JsonSerializer.Serialize(modifiedObj);
+        }
+        catch
+        {
+            return queryJson;
+        }
+    }
+    
+    private static JsonElement ReplaceTimestampInElement(JsonElement element, string gteValue, string lteValue)
+    {
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            var dict = new Dictionary<string, object>();
+            
+            foreach (var property in element.EnumerateObject())
+            {
+                if (property.Name == "range" && property.Value.ValueKind == JsonValueKind.Object)
+                {
+                    var rangeObj = property.Value;
+                    if (rangeObj.TryGetProperty("@timestamp", out var timestampObj))
+                    {
+                        var newTimestamp = new Dictionary<string, object>();
+                        
+                        foreach (var tsProp in timestampObj.EnumerateObject())
+                        {
+                            if (tsProp.Name == "gte")
+                                newTimestamp["gte"] = gteValue;
+                            else if (tsProp.Name == "lte")
+                                newTimestamp["lte"] = lteValue;
+                            else
+                                newTimestamp[tsProp.Name] = JsonSerializer.Deserialize<object>(tsProp.Value.GetRawText())!;
+                        }
+                        
+                        dict["range"] = new Dictionary<string, object> { { "@timestamp", newTimestamp } };
+                        continue;
+                    }
+                }
+                
+                dict[property.Name] = JsonSerializer.Deserialize<object>(
+                    ReplaceTimestampInElement(property.Value, gteValue, lteValue).GetRawText())!;
+            }
+            
+            return JsonSerializer.SerializeToElement(dict);
+        }
+        else if (element.ValueKind == JsonValueKind.Array)
+        {
+            var list = new List<object>();
+            foreach (var item in element.EnumerateArray())
+            {
+                list.Add(JsonSerializer.Deserialize<object>(
+                    ReplaceTimestampInElement(item, gteValue, lteValue).GetRawText())!);
+            }
+            return JsonSerializer.SerializeToElement(list);
+        }
+        
+        return element;
     }
 
     private static string? TryAsk(string prompt, bool isSecret = false)
