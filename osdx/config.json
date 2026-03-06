@@ -1,0 +1,28 @@
+{
+  "Profiles": {
+    "Prod-Logs": {
+      "Connection": {
+        "Endpoint": "https://localhost:9200",
+        "Index": "logs-*",
+        "Username": "admin",
+        "IgnoreSslErrors": true
+      },
+      "Export": {
+        "Format": "csv",
+        "Fields": ["@timestamp", "message"],
+        "BatchSize": 2000,
+        "OutputPath": "./exports/",
+        "ScrollTimeout": "2m"
+      },
+      "Queries": {
+        "Default": { "match_all": {} },
+        "Errors": { "term": { "status": 500 } }
+      }
+    }
+  },
+  "DefaultProfile": "Prod-Logs",
+  "Settings": {
+    "GlobalIgnoreSslErrors": true,
+    "LogLevel": "Information"
+  }
+}
