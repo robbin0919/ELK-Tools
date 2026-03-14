@@ -10,7 +10,6 @@ public class AppConfig
 public class SettingsConfig
 {
     public bool GlobalIgnoreSslErrors { get; set; } = false;
-    public string LogLevel { get; set; } = "Information";
 }
 
 public class ProfileConfig

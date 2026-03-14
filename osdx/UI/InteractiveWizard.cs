@@ -6,6 +6,9 @@
  * ────────────────────────────────────────────────────────────────
  * 日期         版本    修改人員        修改說明
  * ────────────────────────────────────────────────────────────────
+ * 2026-03-07   v1.5.1  Robbin Lee      1. 自動化模式支援動態日期範圍注入參數 (--from/--to)
+ *                                       2. 重構日期解析邏輯至 QueryHelper (智慧補全時分秒)
+ *                                       3. 修正 TUI 模式與 CLI 模式的日期處理一致性
  * 2026-03-06   v1.5.0  Robbin Lee      1. 新增自動化執行模式 (CLI Mode) 與 `export` 指令
  *                                       2. 支援參數覆蓋 (username/password/output/batch-size)
  *                                       3. 多層次密碼讀取：CLI 參數 / 環境變數 / 互動式輸入
@@ -45,6 +48,10 @@ using Serilog;
 using osdx.Models;
 using System.Text.Json;
 using Spectre.Console.Rendering;
+using System.Reflection;
+using System.IO;
+using System.Runtime.InteropServices;
+using System.Diagnostics;
 
 namespace osdx.UI;
 
@@ -90,7 +97,32 @@ public static class InteractiveWizard
     {
         AnsiConsole.Clear();
         AnsiConsole.Write(new FigletText("OSDX").Color(Color.Blue));
-        AnsiConsole.MarkupLine("[grey]OpenSearch Data Xport - 交互式引導模式[/]");
+        var entryAsm = Assembly.GetEntryAssembly();
+        var ver = "v" + (entryAsm?.GetName().Version?.ToString() ?? "?.?.?");
+        string buildDate = "Unknown";
+        try
+        {
+            string path = Process.GetCurrentProcess().MainModule?.FileName ?? AppContext.BaseDirectory;
+            if (!string.IsNullOrEmpty(path))
+            {
+                if (Directory.Exists(path))
+                {
+                    var asmName = entryAsm?.GetName().Name;
+                    if (!string.IsNullOrEmpty(asmName))
+                    {
+                        var cand = Path.Combine(path, asmName + ".dll");
+                        if (!File.Exists(cand)) cand = Path.Combine(path, asmName + ".exe");
+                        if (File.Exists(cand)) path = cand;
+                    }
+                }
+                if (File.Exists(path)) buildDate = File.GetLastWriteTime(path).ToString("yyyy-MM-dd HH:mm");
+            }
+        }
+        catch { }
+
+        var runtime = RuntimeInformation.FrameworkDescription;
+        // 顯示在左側：版本 | 建置日期 | 標題
+        AnsiConsole.MarkupLine($"[yellow]{ver}[/] [grey]|[/] [cyan]{buildDate}[/] [grey]|[/] [grey]OpenSearch Data Xport - 交互式引導模式[/]");
 
         // 顯示目前連線狀態 (若有)
         if (!string.IsNullOrEmpty(_currentEndpoint))
@@ -149,7 +181,7 @@ public static class InteractiveWizard
             settingsTable.AddColumn("項目");
             settingsTable.AddColumn("目前值");
             settingsTable.AddRow("1. Global Ignore SSL Errors", config.Settings.GlobalIgnoreSslErrors ? "[green]True[/]" : "[red]False[/]");
-            settingsTable.AddRow("2. Log Level", $"[yellow]{config.Settings.LogLevel}[/]");
+            settingsTable.AddRow("2. Log Level", $"[yellow]{Core.ConfigService.GetLogLevel()}[/]");
 
             var choice = TrySelect("系統設定中心：", new List<string> {
                 "1. 切換全局 SSL 忽略狀態",
@@ -169,7 +201,7 @@ public static class InteractiveWizard
                     var selectedLevel = TrySelect("請選擇日誌等級 (重啟程式後生效)：", levels);
                     if (selectedLevel != null && selectedLevel != "返回")
                     {
-                        config.Settings.LogLevel = selectedLevel;
+                        Core.ConfigService.SetLogLevel(selectedLevel);
                     }
                     break;
             }
@@ -953,16 +985,16 @@ public static class InteractiveWizard
             var customize = TryConfirm("是否要自訂日期範圍？(否則使用系統時間起算24小時)");
             
             // 初始化為預設值（24小時），避免編譯器警告
-            DateTime fromDate = DateTime.UtcNow.AddDays(-1);
-            DateTime toDate = DateTime.UtcNow;
+            string gteValue = DateTimeOffset.UtcNow.AddDays(-1).ToOffset(TimeSpan.FromHours(8)).ToString("yyyy-MM-ddTHH:mm:ss.fffzzz");
+            string lteValue = DateTimeOffset.UtcNow.ToOffset(TimeSpan.FromHours(8)).ToString("yyyy-MM-ddTHH:mm:ss.fffzzz");
             bool usedEscape = false; // 追蹤是否按了 Esc
             
             if (customize == true)
             {
                 // 使用者選擇自訂：讓使用者輸入日期
                 AnsiConsole.MarkupLine("\n[cyan]請輸入日期範圍：[/]");
-                AnsiConsole.MarkupLine("[grey]格式範例: 2026-02-20 或 2026-02-20T10:30:00[/]");
-                AnsiConsole.MarkupLine("[grey]提示: 直接按 Enter 使用預設值 (系統時間起算24小時)，按 Esc 取消[/]\n");
+                AnsiConsole.MarkupLine("[grey]支援格式: 2026-02-20 或 2026-02-20 10:30:00 (含時分秒)[/]");
+                AnsiConsole.MarkupLine("[grey]提示: 僅輸入日期時，起始自動補 00:00:00，結束補 23:59:59[/]\n");
                 
                 // 輸入起始日期（循環直到成功或取消）
                 while (true)
@@ -973,29 +1005,26 @@ public static class InteractiveWizard
                     {
                         // 按 Esc 取消
                         AnsiConsole.MarkupLine("[yellow]已取消日期輸入，使用系統時間起算24小時。[/]");
-                        fromDate = DateTime.UtcNow.AddDays(-1);
-                        toDate = DateTime.UtcNow;
                         usedEscape = true;
                         break;
                     }
                     
                     if (string.IsNullOrWhiteSpace(fromDateStr))
                     {
-                        // 使用預設值
-                        fromDate = DateTime.UtcNow.AddDays(-1);
-                        AnsiConsole.MarkupLine($"[grey]使用預設起始日期: {fromDate:yyyy-MM-dd HH:mm:ss}[/]");
+                        AnsiConsole.MarkupLine($"[grey]使用預設起始日期: {gteValue}[/]");
                         break;
                     }
                     
-                    if (DateTime.TryParse(fromDateStr, out fromDate))
+                    try 
                     {
-                        fromDate = DateTime.SpecifyKind(fromDate, DateTimeKind.Utc);
-                        AnsiConsole.MarkupLine($"[green]✓ 起始日期: {fromDate:yyyy-MM-dd HH:mm:ss}[/]");
+                        gteValue = Core.QueryHelper.ParseSmartDate(fromDateStr, false);
+                        AnsiConsole.MarkupLine($"[green]✓ 起始日期: {gteValue}[/]");
                         break;
                     }
-                    
-                    // 格式錯誤，顯示錯誤訊息並重新輸入
-                    AnsiConsole.MarkupLine("[red]✗ 日期格式錯誤！請重新輸入或按 Esc 取消。[/]");
+                    catch 
+                    {
+                        AnsiConsole.MarkupLine("[red]✗ 日期格式錯誤！請重新輸入或按 Esc 取消。[/]");
+                    }
                 }
                 
                 // 如果起始日期沒有按 Esc，繼續輸入結束日期
@@ -1009,55 +1038,41 @@ public static class InteractiveWizard
                         {
                             // 按 Esc 取消
                             AnsiConsole.MarkupLine("[yellow]已取消日期輸入，使用系統時間起算24小時。[/]");
-                            fromDate = DateTime.UtcNow.AddDays(-1);
-                            toDate = DateTime.UtcNow;
+                            gteValue = DateTimeOffset.UtcNow.AddDays(-1).ToOffset(TimeSpan.FromHours(8)).ToString("yyyy-MM-ddTHH:mm:ss.fffzzz");
+                            lteValue = DateTimeOffset.UtcNow.ToOffset(TimeSpan.FromHours(8)).ToString("yyyy-MM-ddTHH:mm:ss.fffzzz");
                             break;
                         }
                         
                         if (string.IsNullOrWhiteSpace(toDateStr))
                         {
-                            // 使用預設值
-                            toDate = DateTime.UtcNow;
-                            AnsiConsole.MarkupLine($"[grey]使用預設結束日期: {toDate:yyyy-MM-dd HH:mm:ss}[/]");
+                            AnsiConsole.MarkupLine($"[grey]使用預設結束日期: {lteValue}[/]");
                             break;
                         }
                         
-                        if (DateTime.TryParse(toDateStr, out toDate))
+                        try
                         {
-                            toDate = DateTime.SpecifyKind(toDate, DateTimeKind.Utc);
-                            
-                            // 驗證結束日期不能早於起始日期
-                            if (toDate < fromDate)
-                            {
-                                AnsiConsole.MarkupLine("[red]✗ 結束日期不能早於起始日期！請重新輸入。[/]");
-                                continue;
-                            }
-                            
-                            AnsiConsole.MarkupLine($"[green]✓ 結束日期: {toDate:yyyy-MM-dd HH:mm:ss}[/]");
+                            lteValue = Core.QueryHelper.ParseSmartDate(toDateStr, true);
+                            AnsiConsole.MarkupLine($"[green]✓ 結束日期: {lteValue}[/]");
                             break;
                         }
-                        
-                        // 格式錯誤，顯示錯誤訊息並重新輸入
-                        AnsiConsole.MarkupLine("[red]✗ 日期格式錯誤！請重新輸入或按 Esc 取消。[/]");
+                        catch
+                        {
+                            AnsiConsole.MarkupLine("[red]✗ 日期格式錯誤！請重新輸入或按 Esc 取消。[/]");
+                        }
                     }
                 }
             }
             else
             {
                 // 使用者選擇 No 或按 Esc：直接使用 24 小時預設值
-                fromDate = DateTime.UtcNow.AddDays(-1);
-                toDate = DateTime.UtcNow;
-                AnsiConsole.MarkupLine($"[grey]使用系統時間起算24小時: {fromDate:yyyy-MM-dd HH:mm:ss} 至 {toDate:yyyy-MM-dd HH:mm:ss}[/]");
+                AnsiConsole.MarkupLine($"[grey]使用系統時間起算24小時: {gteValue} 至 {lteValue}[/]");
             }
-            
-            var gteValue = fromDate.ToString("yyyy-MM-ddTHH:mm:ss.fffZ");
-            var lteValue = toDate.ToString("yyyy-MM-ddTHH:mm:ss.fffZ");
             
             AnsiConsole.MarkupLine($"\n[green]日期範圍已設定:[/]");
             AnsiConsole.MarkupLine($"  從: [cyan]{gteValue}[/]");
             AnsiConsole.MarkupLine($"  到: [cyan]{lteValue}[/]\n");
             
-            var modifiedJson = ReplaceTimestampRange(queryJson, gteValue, lteValue);
+            var modifiedJson = Core.QueryHelper.ReplaceTimestampRange(queryJson, gteValue, lteValue);
             var modifiedQuery = JsonSerializer.Deserialize<JsonElement>(modifiedJson);
             return modifiedQuery;
         }
@@ -1069,81 +1084,42 @@ public static class InteractiveWizard
         }
     }
     
-    private static string ReplaceTimestampRange(string queryJson, string gteValue, string lteValue)
-    {
-        try
-        {
-            var queryObj = JsonSerializer.Deserialize<JsonElement>(queryJson);
-            var modifiedObj = ReplaceTimestampInElement(queryObj, gteValue, lteValue);
-            return JsonSerializer.Serialize(modifiedObj);
-        }
-        catch
-        {
-            return queryJson;
-        }
-    }
-    
-    private static JsonElement ReplaceTimestampInElement(JsonElement element, string gteValue, string lteValue)
-    {
-        if (element.ValueKind == JsonValueKind.Object)
-        {
-            var dict = new Dictionary<string, object>();
-            
-            foreach (var property in element.EnumerateObject())
-            {
-                if (property.Name == "range" && property.Value.ValueKind == JsonValueKind.Object)
-                {
-                    var rangeObj = property.Value;
-                    if (rangeObj.TryGetProperty("@timestamp", out var timestampObj))
-                    {
-                        var newTimestamp = new Dictionary<string, object>();
-                        
-                        foreach (var tsProp in timestampObj.EnumerateObject())
-                        {
-                            if (tsProp.Name == "gte")
-                                newTimestamp["gte"] = gteValue;
-                            else if (tsProp.Name == "lte")
-                                newTimestamp["lte"] = lteValue;
-                            else
-                                newTimestamp[tsProp.Name] = JsonSerializer.Deserialize<object>(tsProp.Value.GetRawText())!;
-                        }
-                        
-                        dict["range"] = new Dictionary<string, object> { { "@timestamp", newTimestamp } };
-                        continue;
-                    }
-                }
-                
-                dict[property.Name] = JsonSerializer.Deserialize<object>(
-                    ReplaceTimestampInElement(property.Value, gteValue, lteValue).GetRawText())!;
-            }
-            
-            return JsonSerializer.SerializeToElement(dict);
-        }
-        else if (element.ValueKind == JsonValueKind.Array)
-        {
-            var list = new List<object>();
-            foreach (var item in element.EnumerateArray())
-            {
-                list.Add(JsonSerializer.Deserialize<object>(
-                    ReplaceTimestampInElement(item, gteValue, lteValue).GetRawText())!);
-            }
-            return JsonSerializer.SerializeToElement(list);
-        }
-        
-        return element;
-    }
-
     private static bool HandleAboutFlow()
     {
         RefreshScreen();
-        
-        var panel = new Panel(new Markup(
+
+        var entryAsm = Assembly.GetEntryAssembly();
+        var ver = "v" + (entryAsm?.GetName().Version?.ToString() ?? "?.?.?");
+        string buildDate = "Unknown";
+        try
+        {
+            string path = Process.GetCurrentProcess().MainModule?.FileName ?? AppContext.BaseDirectory;
+            if (!string.IsNullOrEmpty(path))
+            {
+                if (Directory.Exists(path))
+                {
+                    var asmName = entryAsm?.GetName().Name;
+                    if (!string.IsNullOrEmpty(asmName))
+                    {
+                        var cand = Path.Combine(path, asmName + ".dll");
+                        if (!File.Exists(cand)) cand = Path.Combine(path, asmName + ".exe");
+                        if (File.Exists(cand)) path = cand;
+                    }
+                }
+                if (File.Exists(path)) buildDate = File.GetLastWriteTime(path).ToString("yyyy-MM-dd HH:mm");
+            }
+        }
+        catch { }
+
+        var runtime = RuntimeInformation.FrameworkDescription;
+
+        var panelText =
             "[bold cyan]OSDX[/] - [grey]OpenSearch Data Xport[/]\n" +
             "[grey]─────────────────────────────────────────[/]\n\n" +
             "[yellow]版本資訊：[/]\n" +
-            "  • 目前版本：[green]v1.5.0[/]\n" +
-            "  • 編譯日期：[cyan]2026-03-06[/]\n" +
-            "  • 執行環境：[cyan].NET 8.0[/]\n\n" +
+            $"  • 目前版本：[green]{ver}[/]\n" +
+            $"  • 編譯日期：[cyan]{buildDate}[/]\n" +
+            $"  • 執行環境：[cyan]{Markup.Escape(runtime)}[/]\n\n" +
             "[yellow]開發團隊：[/]\n" +
             "  • 主要開發：[green]Robbin Lee[/]\n" +
             "  • GitHub：[blue]https://github.com/robbin0919/ELK-Tools[/]\n\n" +
@@ -1152,17 +1128,18 @@ public static class InteractiveWizard
             "  • 支援自訂查詢與日期範圍\n" +
             "  • 互動式引導操作介面\n" +
             "  • 多設定檔管理\n\n" +
-            "[grey]© 2026 All Rights Reserved[/]"
-        ))
+            "[grey]© 2026 All Rights Reserved[/]";
+
+        var panel = new Panel(new Markup(panelText))
         {
             Header = new PanelHeader("[bold blue] 關於 OSDX [/]", Justify.Center),
             Border = BoxBorder.Double,
             BorderStyle = new Style(Color.Blue),
             Padding = new Padding(2, 1)
         };
-        
+
         AnsiConsole.Write(panel);
-        
+
         return false; // 需要等待使用者按鍵
     }
 

@@ -5,6 +5,51 @@
 ## [Unreleased]
 - 待記錄的變更（尚未釋出）。
 
+## [1.5.6] - 2026-03-14
+### 修正
+- **重要修正：日期替換未生效問題**：`QueryHelper.ReplaceTimestampInElement()` 原先硬編只處理 `range.@timestamp`，導致使用 `range.timestamp`（沒有 `@`）的查詢日期範圍完全未被替換，送出的 Request 仍為原始舊日期。
+- 改為動態匹配：搜尋 `range` 網層下第一個含有 `gte` 或 `lte` 屬性的任意欄位（支援 `@timestamp`、`timestamp`、`created_at` 等所有日期欄位名稱），確保使用者輸入的日期範圍正確套用到實際送出的 Request。
+### 備註
+- 已備份原始檔案於 osdx/backups/20260314_221026/osdx/Core/QueryHelper.cs。
+
+## [1.5.5] - 2026-03-14
+### 修正
+- **消除 IL3000 警告**：`InteractiveWizard.cs` 的 `RefreshScreen()` 與 `HandleAboutFlow()` 移除 `Assembly.Location` 呼叫（在 single-file 發佈模式下永遠回傳空字串），改用 `Process.GetCurrentProcess().MainModule?.FileName ?? AppContext.BaseDirectory` 取得執行檔路徑，確保建置日期能正確讀取。
+- **消除 CS8600 警告**：移除對 `Assembly.Location`（可能為 null）的直接指派，同步解決 nullable 型別警告。
+### 備註
+- 已備份原始檔案於 osdx/backups/20260314_220047/osdx/CHANGELOG.md、osdx.csproj、InteractiveWizard.cs。
+
+## [1.5.4] - 2026-03-14
+### 新增
+- **TUI 主畫面版本資訊顯示**：`RefreshScreen()` 左側新增版本號（`v{Version}`）與建置日期（取自執行檔最後修改時間）的即時顯示，讓使用者隨時掌握目前版本。
+- **「關於」頁面動態化**：`HandleAboutFlow()` 改為動態讀取版本號、建置日期與 .NET Runtime 版本，取代先前的靜態文字。
+### 備註
+- 已備份原始檔案於 osdx/backups/20260314_214106/osdx/CHANGELOG.md、osdx/backups/20260314_214106/osdx/osdx.csproj。
+
+## [1.5.3] - 2026-03-14
+### 改進
+- 引入 `Microsoft.Extensions.Configuration` 與 `Serilog.Settings.Configuration`；Serilog 改由 `appsettings.json` 設定（含 `MinimumLevel`、`WriteTo`）。
+- 移除 `Program.cs` 中手動讀取 `config.json` LogLevel 的程式碼；移除 `SettingsConfig.LogLevel` 屬性（重構）。
+- 新增 `ConfigService.GetLogLevel()` / `ConfigService.SetLogLevel()`，使用 `JsonNode` 操作 `appsettings.json`。
+- TUI 系統設定：修改日誌等級現在直接寫入 `appsettings.json`（不再透過 `config.json`）。
+- `DataStreamer` 新增 `[Request]` INFO 日誌，記錄每次送出的初始查詢 JSON（LowLevel DSL / High-Level / Fallback）；Scroll 批次請求維持 Debug 層級以避免日誌爆量。
+### 備註
+- 已備份原始檔案於 osdx/backups/20260314_211036/CHANGELOG.md、osdx/backups/20260314_211036/osdx.csproj。
+
+## [1.5.2] - 2026-03-14
+### 修正
+- 統一日期範圍顯示與注入為 UTC+8（InteractiveWizard.cs、Program.cs、Core/QueryHelper.cs）。
+### 備註
+- 已備份原始檔案於 osdx/backups/Program.cs.backup_20260314_195931、osdx/backups/InteractiveWizard.cs.backup_20260314_195931、osdx/backups/QueryHelper.cs.backup_20260314_195931。
+
+## [1.5.1] - 2026-03-07
+### 新增
+- **自動化模式日期注入**：`export` 指令新增 `--from` 與 `--to` 參數，支援在 CLI 模式下動態覆蓋查詢中的 `@timestamp` 範圍。
+- **日期預設值策略**：若僅指定 `--from` 或 `--to` 其中之一，另一端將自動補足（預設 24 小時範圍）。
+
+### 重構
+- **職責分離**：將 JSON 查詢處理邏輯從 `InteractiveWizard` 提取至 `QueryHelper` 核心工具類別，實現 TUI 與 CLI 的代碼共享。
+
 ## [1.5.0] - 2026-03-06
 ### 新增
 - **自動化執行模式 (CLI Mode)**：新增 `export` 指令，支援透過命令列參數直接啟動導出任務。

@@ -111,9 +111,13 @@ public static class DataStreamer
                             }
                             
                             var fullRequestJson = JsonSerializer.Serialize(fullRequest);
+                            Log.Information("[Request] 初始查詢 (LowLevel DSL): Index={Index}, ScrollTimeout={Scroll}, Body={Body}",
+                                connection.Index, export.ScrollTimeout,
+                                JsonSerializer.Serialize(JsonSerializer.Deserialize<JsonElement>(fullRequestJson), new JsonSerializerOptions { WriteIndented = true }));
                             
                             // 使用 LowLevel API，將 scroll 作為查詢字符串參數傳遞
                             var lowLevelResponse = client.LowLevel.Search<SearchResponse<Dictionary<string, object>>>(
+
                                 connection.Index,
                                 PostData.String(fullRequestJson),
                                 new SearchRequestParameters { QueryString = new Dictionary<string, object> { { "scroll", export.ScrollTimeout } } }
@@ -125,6 +129,8 @@ public static class DataStreamer
                         {
                             // 簡單查詢條件：使用 High-Level API 自動包裝
                             Log.Debug("偵測到簡單查詢條件，使用 High-Level API 包裝");
+                            Log.Information("[Request] 初始查詢 (High-Level): Index={Index}, Size={Size}, ScrollTimeout={Scroll}, Query={Query}",
+                                connection.Index, export.BatchSize, export.ScrollTimeout, queryJson);
                             
                             searchResponse = await client.SearchAsync<Dictionary<string, object>>(s => s
                                 .Index(connection.Index)
@@ -139,6 +145,8 @@ public static class DataStreamer
                     catch (Exception ex)
                     {
                         Log.Warning(ex, "查詢結構解析失敗，使用預設 High-Level API 包裝");
+                        Log.Information("[Request] 初始查詢 (Fallback High-Level): Index={Index}, Size={Size}, ScrollTimeout={Scroll}, Query={Query}",
+                            connection.Index, export.BatchSize, export.ScrollTimeout, queryJson);
                         
                         // 解析失敗時回退到原始方法
                         searchResponse = await client.SearchAsync<Dictionary<string, object>>(s => s
@@ -174,6 +182,8 @@ public static class DataStreamer
                         isFirstBatch = false;
 
                         // 3. 繼續抓取下一批
+                        Log.Debug("[Request] Scroll 繼續: ScrollId={ScrollId}, ScrollTimeout={Scroll}, ExportedSoFar={Count}",
+                            scrollId, export.ScrollTimeout, totalExported);
                         var scrollResponse = await client.ScrollAsync<Dictionary<string, object>>(export.ScrollTimeout, scrollId);
                         
                         if (!scrollResponse.IsValid)

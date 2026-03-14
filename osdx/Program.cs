@@ -5,29 +5,17 @@ using osdx.Models;
 using osdx.UI;
 using osdx.Core;
 using System.Text.Json;
+using Microsoft.Extensions.Configuration;
 
-// 預讀取設定以取得日誌等級
-string logLevel = "Information";
-try
-{
-    if (File.Exists("config.json"))
-    {
-        var json = File.ReadAllText("config.json");
-        var config = JsonSerializer.Deserialize<AppConfig>(json);
-        if (config?.Settings?.LogLevel != null) logLevel = config.Settings.LogLevel;
-    }
-}
-catch { /* 忽略讀取錯誤，使用預設值 */ }
+// 初始化日誌 (從 appsettings.json 讀取 Serilog 設定)
+var configuration = new ConfigurationBuilder()
+    .SetBasePath(AppContext.BaseDirectory)
+    .AddJsonFile("appsettings.json", optional: true, reloadOnChange: false)
+    .Build();
 
-// 初始化日誌
-var logConfig = new LoggerConfiguration()
-    .MinimumLevel.Is(Enum.Parse<Serilog.Events.LogEventLevel>(logLevel)) 
-    .WriteTo.File("logs/osdx-.log", 
-        rollingInterval: RollingInterval.Day, 
-        outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] {Message:lj}{NewLine}{Exception}",
-        flushToDiskInterval: TimeSpan.FromSeconds(1));
-
-Log.Logger = logConfig.CreateLogger();
+Log.Logger = new LoggerConfiguration()
+    .ReadFrom.Configuration(configuration)
+    .CreateLogger();
 
 // 定義命令列參數
 var rootCommand = new RootCommand("OSDX (OpenSearch Data Xport) - 自動化資料匯出工具");
@@ -40,6 +28,8 @@ var usernameOption = new Option<string>(new[] { "--username", "-u" }, "覆蓋連
 var passwordOption = new Option<string>(new[] { "--password", "-pass" }, "連線密碼");
 var outputOption = new Option<string>(new[] { "--output", "-o" }, "覆蓋輸出路徑");
 var batchSizeOption = new Option<int?>(new[] { "--batch-size", "-b" }, "覆蓋批次抓取數量");
+var fromOption = new Option<string>(new[] { "--from" }, "指定起始日期 (gte)，格式: yyyy-MM-dd 或 ISO 8601");
+var toOption = new Option<string>(new[] { "--to" }, "指定結束日期 (lte)，格式: yyyy-MM-dd 或 ISO 8601");
 
 exportCommand.AddOption(profileOption);
 exportCommand.AddOption(queryOption);
@@ -47,8 +37,10 @@ exportCommand.AddOption(usernameOption);
 exportCommand.AddOption(passwordOption);
 exportCommand.AddOption(outputOption);
 exportCommand.AddOption(batchSizeOption);
+exportCommand.AddOption(fromOption);
+exportCommand.AddOption(toOption);
 
-exportCommand.SetHandler(async (string profileName, string queryName, string? username, string? password, string? output, int? batchSize) =>
+exportCommand.SetHandler(async (string profileName, string queryName, string? username, string? password, string? output, int? batchSize, string? from, string? to) =>
 {
     try 
     {
@@ -82,7 +74,50 @@ exportCommand.SetHandler(async (string profileName, string queryName, string? us
         if (!string.IsNullOrEmpty(output)) profile.Export.OutputPath = output;
         if (batchSize.HasValue) profile.Export.BatchSize = batchSize.Value;
 
-        // 4. 密碼處理 (優先使用指令參數)
+        // 4. 動態日期範圍注入 (如果參數有給)
+        object queryToUse = queryObj;
+        if (!string.IsNullOrEmpty(from) || !string.IsNullOrEmpty(to))
+        {
+            AnsiConsole.MarkupLine("[cyan]ℹ 偵測到日期參數，正在準備動態注入 (含智慧補全時分秒)...[/]");
+            
+            string gteValue;
+            try 
+            {
+                gteValue = string.IsNullOrEmpty(from) 
+                    ? DateTimeOffset.UtcNow.AddDays(-1).ToOffset(TimeSpan.FromHours(8)).ToString("yyyy-MM-ddTHH:mm:ss.fffzzz")
+                    : QueryHelper.ParseSmartDate(from, false);
+            }
+            catch (FormatException ex)
+            {
+                AnsiConsole.MarkupLine($"[bold red]❌ 錯誤：起始日期格式無效 '{from}' ({ex.Message})[/]");
+                Environment.Exit(1);
+                return;
+            }
+
+            string lteValue;
+            try
+            {
+                lteValue = string.IsNullOrEmpty(to)
+                    ? DateTimeOffset.UtcNow.ToOffset(TimeSpan.FromHours(8)).ToString("yyyy-MM-ddTHH:mm:ss.fffzzz")
+                    : QueryHelper.ParseSmartDate(to, true);
+            }
+            catch (FormatException ex)
+            {
+                AnsiConsole.MarkupLine($"[bold red]❌ 錯誤：結束日期格式無效 '{to}' ({ex.Message})[/]");
+                Environment.Exit(1);
+                return;
+            }
+
+            AnsiConsole.MarkupLine($"  起始: [white]{gteValue}[/]");
+            AnsiConsole.MarkupLine($"  結束: [white]{lteValue}[/]");
+
+            var queryJson = JsonSerializer.Serialize(queryObj);
+            var modifiedJson = QueryHelper.ReplaceTimestampRange(queryJson, gteValue, lteValue);
+            queryToUse = JsonSerializer.Deserialize<JsonElement>(modifiedJson);
+            Log.Information("已完成動態日期注入 (智慧解析): From={From}, To={To}", gteValue, lteValue);
+        }
+
+        // 5. 密碼處理 (優先使用指令參數)
         string? finalPassword = password;
         if (string.IsNullOrEmpty(finalPassword))
         {
@@ -97,8 +132,8 @@ exportCommand.SetHandler(async (string profileName, string queryName, string? us
             finalPassword = AnsiConsole.Prompt(new TextPrompt<string>("請輸入 OpenSearch 密碼：").PromptStyle("red").Secret());
         }
 
-        // 5. 執行導出
-        await DataStreamer.ExportAsync(profile.Connection, profile.Export, queryObj, finalPassword);
+        // 6. 執行導出
+        await DataStreamer.ExportAsync(profile.Connection, profile.Export, queryToUse, finalPassword);
     }
     catch (Exception ex)
     {
@@ -106,7 +141,7 @@ exportCommand.SetHandler(async (string profileName, string queryName, string? us
         AnsiConsole.WriteException(ex);
         Environment.Exit(3);
     }
-}, profileOption, queryOption, usernameOption, passwordOption, outputOption, batchSizeOption);
+}, profileOption, queryOption, usernameOption, passwordOption, outputOption, batchSizeOption, fromOption, toOption);
 
 rootCommand.AddCommand(exportCommand);
 
