@@ -5,6 +5,12 @@
 ## [Unreleased]
 - 待記錄的變更（尚未釋出）。
 
+## [1.5.7] - 2026-03-15
+### 改進
+- 調整日誌輸出以避免破壞 TUI 進度條及畫面：在互動式引導模式（TUI）中移除 Console sink（僅寫入檔案），在 CLI 模式下將 Console sink 最低等級限制為 `Warning`，避免 Info/Debug 訊息在進度顯示期間打斷畫面（相關程式：`Program.cs`）。
+### 備註
+- 已備份原始檔案於 osdx/backups/20260315_005142/osdx/CHANGELOG.md、osdx/backups/20260315_005142/osdx/osdx.csproj。
+
 ## [1.5.6] - 2026-03-14
 ### 修正
 - **重要修正：日期替換未生效問題**：`QueryHelper.ReplaceTimestampInElement()` 原先硬編只處理 `range.@timestamp`，導致使用 `range.timestamp`（沒有 `@`）的查詢日期範圍完全未被替換，送出的 Request 仍為原始舊日期。

@@ -1,6 +1,9 @@
 using System.CommandLine;
 using Spectre.Console;
 using Serilog;
+using Serilog.Events;
+using Serilog.Sinks.File;
+using System.Linq;
 using osdx.Models;
 using osdx.UI;
 using osdx.Core;
@@ -13,9 +16,60 @@ var configuration = new ConfigurationBuilder()
     .AddJsonFile("appsettings.json", optional: true, reloadOnChange: false)
     .Build();
 
-Log.Logger = new LoggerConfiguration()
-    .ReadFrom.Configuration(configuration)
-    .CreateLogger();
+// 若為互動式 (TUI)，不要把日誌輸出到 Console（會破壞 Spectre.Console 的畫面）
+bool isInteractive = args.Length == 0;
+var serilogSection = configuration.GetSection("Serilog");
+var minLevelStr = serilogSection["MinimumLevel"] ?? "Information";
+LogEventLevel ParseLevel(string s) => Enum.TryParse<LogEventLevel>(s, true, out var lv) ? lv : LogEventLevel.Information;
+var level = ParseLevel(minLevelStr);
+
+var loggerCfg = new LoggerConfiguration()
+    .MinimumLevel.Is(level)
+    .Enrich.FromLogContext()
+    .Enrich.WithProperty("Application", "osdx");
+
+// 讀取 File Sink 的設定（若存在）
+var fileSection = serilogSection.GetSection("WriteTo").GetChildren().FirstOrDefault(c => string.Equals(c["Name"], "File", StringComparison.OrdinalIgnoreCase));
+if (isInteractive)
+{
+    if (fileSection.Exists())
+    {
+        var argsSec = fileSection.GetSection("Args");
+        var path = argsSec["path"] ?? "logs/osdx-.log";
+        var template = argsSec["outputTemplate"] ?? "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] {Message:lj}{NewLine}{Exception}";
+        var rolling = argsSec["rollingInterval"] ?? "Day";
+        Enum.TryParse<RollingInterval>(rolling, true, out var rollingInterval);
+        var flushStr = argsSec["flushToDiskInterval"] ?? "00:00:01";
+        TimeSpan.TryParse(flushStr, out var flushInterval);
+        loggerCfg.WriteTo.File(path, rollingInterval: rollingInterval, outputTemplate: template, flushToDiskInterval: flushInterval == default ? TimeSpan.FromSeconds(1) : flushInterval);
+    }
+    else
+    {
+        loggerCfg.WriteTo.File("logs/osdx-.log", rollingInterval: RollingInterval.Day);
+    }
+}
+else
+{
+    // CLI 模式：保留 Console 與 File，但限制 Console 僅輸出 Warning 以上，以免 Info 干擾進度 UI
+    loggerCfg.WriteTo.Console(restrictedToMinimumLevel: LogEventLevel.Warning);
+    if (fileSection.Exists())
+    {
+        var argsSec = fileSection.GetSection("Args");
+        var path = argsSec["path"] ?? "logs/osdx-.log";
+        var template = argsSec["outputTemplate"] ?? "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] {Message:lj}{NewLine}{Exception}";
+        var rolling = argsSec["rollingInterval"] ?? "Day";
+        Enum.TryParse<RollingInterval>(rolling, true, out var rollingInterval);
+        var flushStr = argsSec["flushToDiskInterval"] ?? "00:00:01";
+        TimeSpan.TryParse(flushStr, out var flushInterval);
+        loggerCfg.WriteTo.File(path, rollingInterval: rollingInterval, outputTemplate: template, flushToDiskInterval: flushInterval == default ? TimeSpan.FromSeconds(1) : flushInterval);
+    }
+    else
+    {
+        loggerCfg.WriteTo.File("logs/osdx-.log", rollingInterval: RollingInterval.Day);
+    }
+}
+
+Log.Logger = loggerCfg.CreateLogger();
 
 // 定義命令列參數
 var rootCommand = new RootCommand("OSDX (OpenSearch Data Xport) - 自動化資料匯出工具");
