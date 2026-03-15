@@ -8,6 +8,7 @@
 ## [1.5.7] - 2026-03-15
 ### 改進
 - 調整日誌輸出以避免破壞 TUI 進度條及畫面：在互動式引導模式（TUI）中移除 Console sink（僅寫入檔案），在 CLI 模式下將 Console sink 最低等級限制為 `Warning`，避免 Info/Debug 訊息在進度顯示期間打斷畫面（相關程式：`Program.cs`）。
+ - 在自動化執行模式（CLI）啟動時顯示版本號與建置日期，與互動式引導模式一致，方便排程執行與除錯（相關程式：`Program.cs`）。
 ### 備註
 - 已備份原始檔案於 osdx/backups/20260315_005142/osdx/CHANGELOG.md、osdx/backups/20260315_005142/osdx/osdx.csproj。
 

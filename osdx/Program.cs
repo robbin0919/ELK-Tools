@@ -9,6 +9,10 @@ using osdx.UI;
 using osdx.Core;
 using System.Text.Json;
 using Microsoft.Extensions.Configuration;
+using System.Reflection;
+using System.IO;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
 
 // 初始化日誌 (從 appsettings.json 讀取 Serilog 設定)
 var configuration = new ConfigurationBuilder()
@@ -100,6 +104,33 @@ exportCommand.SetHandler(async (string profileName, string queryName, string? us
     {
         Log.Information("啟動自動化匯出模式: Profile={Profile}, Query={Query}", profileName, queryName);
         AnsiConsole.Write(new FigletText("OSDX").Color(Color.Blue));
+
+        // 顯示版本與建置時間（比照互動式引導模式）
+        var entryAsm = Assembly.GetEntryAssembly();
+        var ver = "v" + (entryAsm?.GetName().Version?.ToString() ?? "?.?.?");
+        string buildDate = "Unknown";
+        try
+        {
+            string path = Process.GetCurrentProcess().MainModule?.FileName ?? AppContext.BaseDirectory;
+            if (!string.IsNullOrEmpty(path))
+            {
+                if (Directory.Exists(path))
+                {
+                    var asmName = entryAsm?.GetName().Name;
+                    if (!string.IsNullOrEmpty(asmName))
+                    {
+                        var cand = Path.Combine(path, asmName + ".dll");
+                        if (!File.Exists(cand)) cand = Path.Combine(path, asmName + ".exe");
+                        if (File.Exists(cand)) path = cand;
+                    }
+                }
+                if (File.Exists(path)) buildDate = File.GetLastWriteTime(path).ToString("yyyy-MM-dd HH:mm");
+            }
+        }
+        catch { }
+
+        AnsiConsole.MarkupLine($"[yellow]{ver}[/] [grey]|[/] [cyan]{buildDate}[/] [grey]|[/] [grey]OpenSearch Data Xport - 自動化執行模式[/]");
+
         AnsiConsole.MarkupLine($"[yellow]🚀 啟動自動化執行：Profile=[white]{profileName}[/], Query=[white]{queryName}[/][/]");
 
         // 1. 載入設定檔
